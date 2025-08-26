@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course-wise Timetable - AI Timetable Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand d-flex align-items-center" href="/dashboard">
+                <img src="/static/assets/logo.svg" alt="Logo" width="40" height="40" class="me-2">
+                AI Timetable Generator
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/dashboard">
+                    <i class="fas fa-home me-1"></i>Dashboard
+                </a>
+                <button class="btn btn-outline-light btn-sm ms-2" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Logout
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="page-header animate-fade-in">
+                    <h1 class="display-6 fw-bold mb-3">
+                        <i class="fas fa-graduation-cap me-3"></i>Course-wise Timetable Generator
+                    </h1>
+                    <p class="lead text-muted">Create comprehensive timetables organized by course and program.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-4">
+                <div class="card animate-slide-in">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-cogs me-2"></i>Configuration
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="courseForm" class="needs-validation" novalidate>
+                            <div class="mb-3">
+                                <label for="courseName" class="form-label">Course Name</label>
+                                <input type="text" class="form-control" id="courseName" placeholder="e.g., BCA, B.Tech" required>
+                                <div class="invalid-feedback">Please provide a course name.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="className" class="form-label">Class Name</label>
+                                <input type="text" class="form-control" id="className" placeholder="e.g., 1st Year, 3rd Year" required>
+                                <div class="invalid-feedback">Please provide a class name.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="numberOfSections" class="form-label">Number of Sections</label>
+                                <input type="number" class="form-control" id="numberOfSections" value="1" min="1" max="20" required>
+                                <div class="invalid-feedback">Please provide number of sections (1-20).</div>
+                                <div class="form-text">Generate timetables for multiple sections without teacher conflicts</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="workingDays" class="form-label">Working Days per Week</label>
+                                <select class="form-select" id="workingDays" required>
+                                    <option value="5" selected>5 Days</option>
+                                    <option value="6">6 Days</option>
+                                    <option value="7">7 Days</option>
+                                </select>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-6">
+                                    <div class="mb-3">
+                                        <label for="startTime" class="form-label">Start Time</label>
+                                        <input type="time" class="form-control" id="startTime" value="09:00" required>
+                                        <div class="invalid-feedback">Please provide a start time.</div>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="mb-3">
+                                        <label for="lectureDuration" class="form-label">Lecture Duration (mins)</label>
+                                        <input type="number" class="form-control" id="lectureDuration" value="50" min="30" max="120" required>
+                                        <div class="invalid-feedback">Duration must be 30-120 minutes.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="maxHoursPerDay" class="form-label">Lectures per Day</label>
+                                <select class="form-select" id="maxHoursPerDay" required>
+                                    <option value="3">3 Lectures</option>
+                                    <option value="4" selected>4 Lectures</option>
+                                    <option value="5">5 Lectures</option>
+                                    <option value="6">6 Lectures</option>
+                                    <option value="7">7 Lectures</option>
+                                    <option value="8">8 Lectures</option>
+                                </select>
+                                <div class="form-text">Breaks are automatically added and don't count as lectures</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="freeLectures" class="form-label">Free Lectures per Week</label>
+                                <input type="number" class="form-control" id="freeLectures" value="2" min="0" max="10">
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="breakEnabled" checked>
+                                    <label class="form-check-label" for="breakEnabled">Enable Break/Recess</label>
+                                </div>
+                            </div>
+
+                            <div id="breakOptions" class="mb-3">
+                                <div class="row">
+                                    <div class="col-6">
+                                        <label for="breakStart" class="form-label">Break Start Period</label>
+                                        <select class="form-select" id="breakStart">
+                                            <option value="3" selected>Period 3</option>
+                                            <option value="4">Period 4</option>
+                                            <option value="5">Period 5</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-6">
+                                        <label for="breakDuration" class="form-label">Duration (Minutes)</label>
+                                        <input type="number" class="form-control" id="breakDuration" value="15" min="5" max="60" step="5">
+                                        <div class="form-text">Break duration in minutes (5-60)</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="my-4">
+
+                            <h6 class="mb-3">Subjects & Teachers</h6>
+                            <div id="subjectsList">
+                                <!-- Dynamic content -->
+                            </div>
+
+                            <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-3" onclick="addSubject()">
+                                <i class="fas fa-plus me-2"></i>Add Subject
+                            </button>
+
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-success btn-lg generate-btn">
+                                    <i class="fas fa-magic me-2"></i>Generate Timetable
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-8">
+                <div class="card animate-slide-in">
+                    <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-table me-2"></i>Generated Timetable
+                        </h5>
+                        <div class="btn-group" id="exportButtons" style="display: none;">
+                            <button class="btn btn-outline-light btn-sm" onclick="exportTimetable('pdf')">
+                                <i class="fas fa-file-pdf me-1"></i>PDF
+                            </button>
+                            <button class="btn btn-outline-light btn-sm" onclick="exportTimetable('excel')">
+                                <i class="fas fa-file-excel me-1"></i>Excel
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="timetableContainer">
+                            <div class="text-center text-muted py-5">
+                                <i class="fas fa-calendar-alt fa-3x mb-3"></i>
+                                <h5>No Timetable Generated</h5>
+                                <p>Fill in the configuration form and click "Generate Timetable" to create your schedule.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-dark text-light py-4 mt-5">
+        <div class="container text-center">
+            <p>&copy; 2025 AI Timetable Generator. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/generator.js"></script>
+    <script>
+        // Initialize course timetable generator
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeGenerator('course');
+        });
+    </script>
+</body>
+</html>

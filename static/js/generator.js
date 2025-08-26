@@ -1,0 +1,1337 @@
+// Timetable Generator module for AI Timetable Generator
+
+let generatorType = 'course'; // 'course' or 'class'
+let currentTimetableData = null;
+
+// Initialize generator based on type
+function initializeGenerator(type) {
+    if (!requireAuth()) return;
+    
+    generatorType = type;
+    setupGeneratorForm();
+    loadSavedSubjects();
+    setupBreakToggle();
+    addInitialSubject();
+}
+
+function setupGeneratorForm() {
+    const formId = generatorType === 'course' ? 'courseForm' : 'classForm';
+    const form = document.getElementById(formId);
+    
+    if (form) {
+        form.addEventListener('submit', handleTimetableGeneration);
+    }
+}
+
+function setupBreakToggle() {
+    const breakEnabled = document.getElementById('breakEnabled');
+    const breakOptions = document.getElementById('breakOptions');
+    
+    if (breakEnabled && breakOptions) {
+        breakEnabled.addEventListener('change', function() {
+            breakOptions.style.display = this.checked ? 'block' : 'none';
+        });
+        
+        // Initial state
+        breakOptions.style.display = breakEnabled.checked ? 'block' : 'none';
+    }
+}
+
+function addSubject() {
+    const container = document.getElementById('subjectsList');
+    const subjectCount = container.children.length;
+    
+    const subjectDiv = document.createElement('div');
+    subjectDiv.className = 'subject-item mb-3 p-3 border rounded animate-slide-up';
+    subjectDiv.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Subject ${subjectCount + 1}</h6>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeSubject(this)">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+        
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">Subject Code</label>
+                <input type="text" class="form-control subject-code" placeholder="e.g., CS101" required>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Subject Name</label>
+                <input type="text" class="form-control subject-name" placeholder="e.g., Data Structures" required>
+            </div>
+        </div>
+        
+        <div class="mt-2">
+            <label class="form-label">Teachers</label>
+            <div class="teachers-list">
+                <div class="input-group mb-2">
+                    <input type="text" class="form-control teacher-input" placeholder="Teacher Name" required>
+                    <button type="button" class="btn btn-outline-danger" onclick="removeTeacher(this)">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="addTeacherToSubject(this)">
+                <i class="fas fa-plus me-1"></i>Add Teacher
+            </button>
+        </div>
+        
+        <div class="row g-2 mt-2">
+            <div class="col-md-12">
+                <label class="form-label">Priority</label>
+                <select class="form-select subject-priority">
+                    <option value="normal" selected>Normal</option>
+                    <option value="high">High</option>
+                    <option value="low">Low</option>
+                </select>
+                <div class="form-text">Lectures per week will be automatically calculated based on working days and lectures per day</div>
+            </div>
+        </div>
+        
+        <div class="mt-3">
+            <div class="form-check form-switch">
+                <input class="form-check-input lab-checkbox" type="checkbox" onchange="toggleLabOptions(this)">
+                <label class="form-check-label">Lab Subject</label>
+            </div>
+            
+            <div class="lab-options mt-2" style="display: none;">
+                <label class="form-label">Lab Duration</label>
+                <select class="form-select lab-duration">
+                    <option value="regular" selected>Regular Duration (same as lecture)</option>
+                    <option value="double">Lab Duration (2 consecutive periods)</option>
+                </select>
+                <div class="form-text">Lab duration will automatically block 2 consecutive periods in timetable</div>
+            </div>
+        </div>
+    `;
+    
+    container.appendChild(subjectDiv);
+}
+
+function addInitialSubject() {
+    const container = document.getElementById('subjectsList');
+    if (container && container.children.length === 0) {
+        addSubject();
+    }
+}
+
+function removeSubject(button) {
+    const subjectDiv = button.closest('.subject-item');
+    subjectDiv.style.animation = 'slideUp 0.3s ease-out reverse';
+    setTimeout(() => {
+        subjectDiv.remove();
+        updateSubjectNumbers();
+    }, 300);
+}
+
+function updateSubjectNumbers() {
+    const subjects = document.querySelectorAll('.subject-item h6');
+    subjects.forEach((header, index) => {
+        header.textContent = `Subject ${index + 1}`;
+    });
+}
+
+function addTeacherToSubject(button) {
+    const teachersList = button.previousElementSibling;
+    const newTeacher = document.createElement('div');
+    newTeacher.className = 'input-group mb-2';
+    newTeacher.innerHTML = `
+        <input type="text" class="form-control teacher-input" placeholder="Teacher Name" required>
+        <button type="button" class="btn btn-outline-danger" onclick="removeTeacher(this)">
+            <i class="fas fa-trash"></i>
+        </button>
+    `;
+    teachersList.appendChild(newTeacher);
+}
+
+function removeTeacher(button) {
+    const teacherDiv = button.closest('.input-group');
+    const teachersList = teacherDiv.parentNode;
+    
+    // Don't allow removing the last teacher
+    if (teachersList.children.length <= 1) {
+        showToast('At least one teacher is required for each subject', 'warning');
+        return;
+    }
+    
+    teacherDiv.remove();
+}
+
+function toggleLabOptions(checkbox) {
+    const labOptions = checkbox.closest('.subject-item').querySelector('.lab-options');
+    labOptions.style.display = checkbox.checked ? 'block' : 'none';
+}
+
+function loadSavedSubjects() {
+    const subjects = getSubjectsFromStorage();
+    if (subjects.length === 0) return;
+    
+    // Group subjects by course and class for easy selection
+    const groupedSubjects = {};
+    subjects.forEach(subject => {
+        const key = `${subject.courseName} - ${subject.className}`;
+        if (!groupedSubjects[key]) {
+            groupedSubjects[key] = [];
+        }
+        groupedSubjects[key].push(subject);
+    });
+    
+    // Add a "Load Saved Subjects" button if there are saved subjects
+    const container = document.getElementById('subjectsList');
+    if (container) {
+        const loadButton = document.createElement('div');
+        loadButton.className = 'mb-3';
+        loadButton.innerHTML = `
+            <button type="button" class="btn btn-outline-info w-100" onclick="showLoadSubjectsModal()">
+                <i class="fas fa-download me-2"></i>Load Saved Subjects
+            </button>
+        `;
+        container.parentNode.insertBefore(loadButton, container);
+    }
+}
+
+function showLoadSubjectsModal() {
+    const subjects = getSubjectsFromStorage();
+    if (subjects.length === 0) {
+        showToast('No saved subjects found', 'info');
+        return;
+    }
+    
+    // Create and show modal
+    const modal = document.createElement('div');
+    modal.className = 'modal fade';
+    modal.innerHTML = `
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-download me-2"></i>Load Saved Subjects
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <input type="text" class="form-control" id="subjectSearchInput" 
+                               placeholder="Search subjects..." onkeyup="filterLoadableSubjects()">
+                    </div>
+                    <div id="loadableSubjectsList" class="max-height-400 overflow-auto">
+                        ${generateLoadableSubjectsList(subjects)}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="loadSelectedSubjects()">
+                        <i class="fas fa-check me-2"></i>Load Selected
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    const bsModal = new bootstrap.Modal(modal);
+    bsModal.show();
+    
+    // Remove modal from DOM when hidden
+    modal.addEventListener('hidden.bs.modal', () => {
+        modal.remove();
+    });
+}
+
+function generateLoadableSubjectsList(subjects) {
+    let html = '';
+    subjects.forEach(subject => {
+        html += `
+            <div class="card mb-2 loadable-subject">
+                <div class="card-body p-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="${subject.id}" id="load_${subject.id}">
+                        <label class="form-check-label w-100" for="load_${subject.id}">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="mb-1">${subject.subjectName}</h6>
+                                    <small class="text-muted">${subject.subjectCode}</small>
+                                    <br>
+                                    <small class="text-primary">${subject.courseName} - ${subject.className}</small>
+                                </div>
+                                <div class="text-end">
+                                    <small class="text-muted">Teachers: ${subject.teacherNames?.length || 0}</small>
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    return html;
+}
+
+function filterLoadableSubjects() {
+    const searchTerm = document.getElementById('subjectSearchInput').value.toLowerCase();
+    const subjects = document.querySelectorAll('.loadable-subject');
+    
+    subjects.forEach(subject => {
+        const text = subject.textContent.toLowerCase();
+        subject.style.display = text.includes(searchTerm) ? 'block' : 'none';
+    });
+}
+
+function loadSelectedSubjects() {
+    const checkboxes = document.querySelectorAll('#loadableSubjectsList input[type="checkbox"]:checked');
+    if (checkboxes.length === 0) {
+        showToast('Please select at least one subject', 'warning');
+        return;
+    }
+    
+    const subjects = getSubjectsFromStorage();
+    const container = document.getElementById('subjectsList');
+    
+    // Clear existing subjects
+    container.innerHTML = '';
+    
+    checkboxes.forEach(checkbox => {
+        const subjectId = checkbox.value;
+        const subject = subjects.find(s => s.id === subjectId);
+        
+        if (subject) {
+            addSubjectFromData(subject);
+        }
+    });
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.querySelector('.modal.show'));
+    modal.hide();
+    
+    showToast(`${checkboxes.length} subject(s) loaded successfully!`, 'success');
+}
+
+function addSubjectFromData(subjectData) {
+    const container = document.getElementById('subjectsList');
+    const subjectCount = container.children.length;
+    
+    const subjectDiv = document.createElement('div');
+    subjectDiv.className = 'subject-item mb-3 p-3 border rounded animate-slide-up';
+    
+    let teachersHtml = '';
+    (subjectData.teacherNames || []).forEach(teacher => {
+        teachersHtml += `
+            <div class="input-group mb-2">
+                <input type="text" class="form-control teacher-input" value="${teacher}" required>
+                <button type="button" class="btn btn-outline-danger" onclick="removeTeacher(this)">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `;
+    });
+    
+    if (!teachersHtml) {
+        teachersHtml = `
+            <div class="input-group mb-2">
+                <input type="text" class="form-control teacher-input" placeholder="Teacher Name" required>
+                <button type="button" class="btn btn-outline-danger" onclick="removeTeacher(this)">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `;
+    }
+    
+    subjectDiv.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Subject ${subjectCount + 1}</h6>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeSubject(this)">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+        
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">Subject Code</label>
+                <input type="text" class="form-control subject-code" value="${subjectData.subjectCode || ''}" required>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Subject Name</label>
+                <input type="text" class="form-control subject-name" value="${subjectData.subjectName || ''}" required>
+            </div>
+        </div>
+        
+        <div class="mt-2">
+            <label class="form-label">Teachers</label>
+            <div class="teachers-list">
+                ${teachersHtml}
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="addTeacherToSubject(this)">
+                <i class="fas fa-plus me-1"></i>Add Teacher
+            </button>
+        </div>
+        
+        <div class="row g-2 mt-2">
+            <div class="col-md-12">
+                <label class="form-label">Priority</label>
+                <select class="form-select subject-priority">
+                    <option value="normal" selected>Normal</option>
+                    <option value="high">High</option>
+                    <option value="low">Low</option>
+                </select>
+                <div class="form-text">Lectures per week will be automatically calculated based on working days and lectures per day</div>
+            </div>
+        </div>
+        
+        <div class="mt-3">
+            <div class="form-check form-switch">
+                <input class="form-check-input lab-checkbox" type="checkbox" onchange="toggleLabOptions(this)">
+                <label class="form-check-label">Lab Subject</label>
+            </div>
+            
+            <div class="lab-options mt-2" style="display: none;">
+                <label class="form-label">Lab Duration</label>
+                <select class="form-select lab-duration">
+                    <option value="regular" selected>Regular Duration (same as lecture)</option>
+                    <option value="double">Lab Duration (2 consecutive periods)</option>
+                </select>
+                <div class="form-text">Lab duration will automatically block 2 consecutive periods in timetable</div>
+            </div>
+        </div>
+    `;
+    
+    container.appendChild(subjectDiv);
+}
+
+function handleTimetableGeneration(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    if (!validateForm(form)) {
+        return;
+    }
+    
+    // Show loading state
+    const submitButton = form.querySelector('button[type="submit"]');
+    setLoadingState(submitButton, true);
+    
+    try {
+        const formData = collectFormData();
+        if (!formData) {
+            setLoadingState(submitButton, false);
+            return;
+        }
+        
+        if (formData.numberOfSections && formData.numberOfSections > 1) {
+            // Generate timetables for multiple sections
+            const sectionTimetables = generateMultipleSectionTimetables(formData);
+            if (sectionTimetables) {
+                displayMultipleSectionTimetables(sectionTimetables);
+                saveTimetableToHistory(`${formData.courseName} - ${formData.className} (${formData.numberOfSections} sections)`, sectionTimetables);
+                showToast(`Timetables generated successfully for ${formData.numberOfSections} sections!`, 'success');
+            } else {
+                showToast('Failed to generate timetables for all sections. Please check your constraints.', 'error');
+            }
+        } else {
+            // Generate single timetable
+            const timetable = generateTimetable(formData);
+            if (timetable) {
+                displayTimetable(timetable);
+                saveTimetableToHistory(`${formData.courseName} - ${formData.className}`, timetable);
+                showToast('Timetable generated successfully!', 'success');
+            } else {
+                showToast('Failed to generate timetable. Please check your constraints.', 'error');
+            }
+        }
+    } catch (error) {
+        console.error('Timetable generation error:', error);
+        showToast('An error occurred while generating the timetable.', 'error');
+    } finally {
+        setLoadingState(submitButton, false);
+    }
+}
+
+function collectFormData() {
+    const courseName = document.getElementById('courseName').value.trim();
+    const className = document.getElementById('className').value.trim();
+    const sectionName = document.getElementById('sectionName')?.value.trim() || '';
+    const numberOfSections = parseInt(document.getElementById('numberOfSections')?.value || 1);
+    const workingDays = parseInt(document.getElementById('workingDays').value);
+    const maxHoursPerDay = parseInt(document.getElementById('maxHoursPerDay').value);
+    const freeLectures = parseInt(document.getElementById('freeLectures').value);
+    const breakEnabled = document.getElementById('breakEnabled').checked;
+    const breakStart = breakEnabled ? parseInt(document.getElementById('breakStart').value) : null;
+    const breakDurationMinutes = breakEnabled ? parseInt(document.getElementById('breakDuration').value) : null;
+    const startTime = document.getElementById('startTime').value;
+    const lectureDuration = parseInt(document.getElementById('lectureDuration').value);
+    
+    // Collect subjects
+    const subjects = [];
+    const subjectItems = document.querySelectorAll('.subject-item');
+    
+    if (subjectItems.length === 0) {
+        showToast('Please add at least one subject', 'error');
+        return null;
+    }
+    
+    for (const item of subjectItems) {
+        const subjectCode = item.querySelector('.subject-code').value.trim();
+        const subjectName = item.querySelector('.subject-name').value.trim();
+        // Remove this line - lectures per week will be calculated automatically
+        const priority = item.querySelector('.subject-priority').value;
+        const isLab = item.querySelector('.lab-checkbox').checked;
+        const labDuration = isLab ? item.querySelector('.lab-duration').value : 'regular';
+        
+        const teacherInputs = item.querySelectorAll('.teacher-input');
+        const teachers = [];
+        
+        for (const input of teacherInputs) {
+            const teacher = input.value.trim();
+            if (teacher) {
+                teachers.push(teacher);
+            }
+        }
+        
+        if (!subjectCode || !subjectName || teachers.length === 0) {
+            showToast('Please fill in all subject details including at least one teacher', 'error');
+            return null;
+        }
+        
+        subjects.push({
+            code: subjectCode,
+            name: subjectName,
+            teachers: teachers,
+            priority: priority,
+            isLab: isLab,
+            labDuration: labDuration
+        });
+    }
+    
+    return {
+        courseName,
+        className: sectionName ? `${className} - ${sectionName}` : className,
+        numberOfSections,
+        workingDays,
+        maxHoursPerDay,
+        freeLectures,
+        breakEnabled,
+        breakStart: breakStart - 1, // Convert to 0-based index  
+        breakDurationMinutes,
+        startTime,
+        lectureDuration,
+        subjects
+    };
+}
+
+function generateTimetable(data) {
+    const { workingDays, maxHoursPerDay, subjects, breakEnabled, breakStart, breakDurationMinutes } = data;
+    
+    // Initialize timetable grid - STRICTLY respect maxHoursPerDay
+    const grid = [];
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        const row = [];
+        for (let day = 0; day < workingDays; day++) {
+            row.push({ subject: null, teacher: null, subjectCode: null, isBreak: false });
+        }
+        grid.push(row);
+    }
+    
+    // Don't place breaks in the grid - they will be handled in display
+    
+    // Create allocation plan
+    const allocationPlan = createAllocationPlan(subjects, data);
+    
+    // Allocate subjects to timetable with strict period limit
+    const success = allocateSubjectsToGridStrict(grid, allocationPlan, data);
+    
+    if (!success) {
+        console.warn('Some subjects could not be allocated due to timetable constraints');
+    }
+    
+    return {
+        ...data,
+        timetableGrid: grid,
+        breakEnabled,
+        breakStart,
+        breakDurationMinutes
+    };
+}
+
+function createAllocationPlan(subjects, data) {
+    const { workingDays, maxHoursPerDay } = data;
+    
+    // Calculate total lectures per week (breaks don't reduce lecture count)
+    const totalLecturesPerWeek = workingDays * maxHoursPerDay;
+    
+    // Calculate base lectures per subject = total lectures / number of subjects
+    const baseLecturesPerSubject = Math.floor(totalLecturesPerWeek / subjects.length);
+    
+    // Count high priority subjects
+    const highPrioritySubjects = subjects.filter(subject => subject.priority === 'high');
+    const normalPrioritySubjects = subjects.filter(subject => subject.priority === 'normal' || subject.priority === 'low');
+    
+    // Calculate remaining lectures after base allocation
+    const baseTotalUsed = baseLecturesPerSubject * subjects.length;
+    const remainingLectures = totalLecturesPerWeek - baseTotalUsed;
+    
+    // Assign base lectures to all subjects first
+    subjects.forEach(subject => {
+        subject.lecturesPerWeek = baseLecturesPerSubject;
+    });
+    
+    // Note: Priority allocation now happens after grid creation, filling actual empty slots
+    
+    // Log the final allocation before scaling
+    console.log('Lectures per subject (base allocation):');
+    subjects.forEach(subject => {
+        console.log(`${subject.name} (${subject.priority}): ${subject.lecturesPerWeek} lectures`);
+    });
+    
+    // Calculate total lectures requested
+    let totalLecturesRequested = 0;
+    subjects.forEach(subject => {
+        if (subject.isLab && subject.labDuration === 'double') {
+            // Double duration labs take 2 slots
+            totalLecturesRequested += subject.lecturesPerWeek * 2;
+        } else {
+            totalLecturesRequested += subject.lecturesPerWeek;
+        }
+    });
+    
+    console.log(`Total lectures available: ${totalLecturesPerWeek}, Total lectures requested: ${totalLecturesRequested}`);
+    
+    // If too many lectures requested, proportionally reduce them
+    let scaleFactor = 1;
+    if (totalLecturesRequested > totalLecturesPerWeek) {
+        scaleFactor = totalLecturesPerWeek / totalLecturesRequested;
+        console.warn(`Too many lectures requested. Scaling down by factor: ${scaleFactor.toFixed(2)}`);
+    }
+    
+    const plan = [];
+    
+    subjects.forEach(subject => {
+        // Apply scaling factor to lectures per week
+        let adjustedLectures = Math.floor(subject.lecturesPerWeek * scaleFactor);
+        
+        // Ensure at least 1 lecture for high priority subjects
+        if (adjustedLectures === 0 && subject.priority === 'high') {
+            adjustedLectures = 1;
+        }
+        
+        if (adjustedLectures > 0) {
+            // Distribute lectures among teachers
+            const teachersCount = subject.teachers.length;
+            const lecturesPerTeacher = Math.floor(adjustedLectures / teachersCount);
+            const extraLectures = adjustedLectures % teachersCount;
+            
+            subject.teachers.forEach((teacher, index) => {
+                const lectures = lecturesPerTeacher + (index < extraLectures ? 1 : 0);
+                
+                for (let l = 0; l < lectures; l++) {
+                    plan.push({
+                        subject: subject.name,
+                        subjectCode: subject.code,
+                        teacher: teacher,
+                        priority: subject.priority,
+                        isLab: subject.isLab,
+                        labDuration: subject.labDuration,
+                        allocated: false
+                    });
+                }
+            });
+        }
+    });
+    
+    // Sort by priority, with lab subjects requiring double duration first
+    plan.sort((a, b) => {
+        const priorityOrder = { high: 3, normal: 2, low: 1 };
+        
+        // Lab subjects with double duration get highest priority
+        if (a.isLab && a.labDuration === 'double' && (!b.isLab || b.labDuration !== 'double')) {
+            return -1;
+        }
+        if (b.isLab && b.labDuration === 'double' && (!a.isLab || a.labDuration !== 'double')) {
+            return 1;
+        }
+        
+        return priorityOrder[b.priority] - priorityOrder[a.priority];
+    });
+    
+    console.log(`Final allocation plan: ${plan.length} lectures to allocate`);
+    return plan;
+}
+
+// New function to generate timetables for multiple sections
+function generateMultipleSectionTimetables(data) {
+    const sections = [];
+    const teacherUsage = {}; // Track teacher usage across sections
+    
+    // Initialize global lab tracker for consistent lab distribution across sections
+    const globalLabTracker = {};
+    
+    // First, show teacher distribution summary
+    console.log('\n=== TEACHER DISTRIBUTION ACROSS SECTIONS ===');
+    data.subjects.forEach(subject => {
+        if (subject.teachers.length > 1) {
+            console.log(`\n${subject.name} (${subject.code}):`);
+            
+            const totalTeachers = subject.teachers.length;
+            const sectionsPerTeacher = Math.floor(data.numberOfSections / totalTeachers);
+            const remainingSections = data.numberOfSections % totalTeachers;
+            
+            let currentSection = 1;
+            for (let teacherIndex = 0; teacherIndex < totalTeachers; teacherIndex++) {
+                let sectionsForThisTeacher = sectionsPerTeacher;
+                if (teacherIndex < remainingSections) {
+                    sectionsForThisTeacher += 1;
+                }
+                
+                const endSection = currentSection + sectionsForThisTeacher - 1;
+                const sectionRange = currentSection === endSection ? 
+                    `Section ${currentSection}` : 
+                    `Sections ${currentSection}-${endSection}`;
+                
+                console.log(`  ${subject.teachers[teacherIndex]}: ${sectionRange} (${sectionsForThisTeacher} sections)`);
+                currentSection += sectionsForThisTeacher;
+            }
+        }
+    });
+    console.log('\n=== GENERATING SECTION TIMETABLES ===\n');
+    
+    // Create global teacher schedule to prevent conflicts across sections
+    const globalTeacherSchedule = {};
+    
+    for (let sectionNum = 1; sectionNum <= data.numberOfSections; sectionNum++) {
+        const sectionData = {
+            ...data,
+            className: `${data.className} - Section ${sectionNum}`,
+            sectionNumber: sectionNum,
+            globalTeacherSchedule: globalTeacherSchedule, // Pass global schedule
+            globalLabTracker: globalLabTracker // Pass global lab tracker for balanced distribution
+        };
+        
+        // Distribute teachers fairly across sections
+        const adjustedSubjects = distributeTeachersAcrossSections(data.subjects, sectionNum, data.numberOfSections, teacherUsage);
+        sectionData.subjects = adjustedSubjects;
+        
+        console.log(`\n--- Generating Section ${sectionNum} ---`);
+        const sectionTimetable = generateTimetable(sectionData);
+        if (!sectionTimetable) {
+            console.error(`Failed to generate timetable for section ${sectionNum}`);
+            return null;
+        }
+        
+        // Update teacher usage tracking
+        updateTeacherUsage(sectionTimetable, teacherUsage);
+        sections.push(sectionTimetable);
+    }
+    
+    // Log lab distribution summary
+    console.log('\n=== LAB DISTRIBUTION SUMMARY ===');
+    Object.keys(globalLabTracker).forEach(labKey => {
+        console.log(`${labKey}: ${globalLabTracker[labKey]} total lab sessions across all sections`);
+    });
+    
+    return {
+        ...data,
+        sections: sections,
+        numberOfSections: data.numberOfSections,
+        globalLabTracker: globalLabTracker
+    };
+}
+
+// Enhanced function to distribute teachers evenly across multiple sections with conflict prevention
+function distributeTeachersAcrossSections(subjects, sectionNumber, totalSections, teacherUsage) {
+    return subjects.map(subject => {
+        if (subject.teachers.length === 1 || totalSections === 1) {
+            // Warn about potential conflicts when one teacher handles multiple sections
+            if (subject.teachers.length === 1 && totalSections > 1) {
+                console.warn(`⚠️ Subject ${subject.name} has only one teacher (${subject.teachers[0]}) for ${totalSections} sections - potential scheduling conflicts`);
+            }
+            return subject; // No need to distribute if only one teacher or one section
+        }
+        
+        // Calculate sections per teacher (distribute evenly)
+        const totalTeachers = subject.teachers.length;
+        const sectionsPerTeacher = Math.floor(totalSections / totalTeachers);
+        const remainingSections = totalSections % totalTeachers;
+        
+        // Find which teacher should handle this section
+        let assignedTeacher = null;
+        let currentSection = 1;
+        
+        for (let teacherIndex = 0; teacherIndex < totalTeachers; teacherIndex++) {
+            // Calculate how many sections this teacher gets
+            let sectionsForThisTeacher = sectionsPerTeacher;
+            if (teacherIndex < remainingSections) {
+                sectionsForThisTeacher += 1; // Give extra section to first few teachers
+            }
+            
+            // Check if current section falls in this teacher's range
+            if (sectionNumber >= currentSection && sectionNumber < currentSection + sectionsForThisTeacher) {
+                assignedTeacher = subject.teachers[teacherIndex];
+                break;
+            }
+            
+            currentSection += sectionsForThisTeacher;
+        }
+        
+        // Fallback: round-robin assignment if calculation fails
+        if (!assignedTeacher) {
+            const teacherIndex = (sectionNumber - 1) % totalTeachers;
+            assignedTeacher = subject.teachers[teacherIndex];
+        }
+        
+        console.log(`Subject: ${subject.name}, Section: ${sectionNumber}, Teacher: ${assignedTeacher}`);
+        
+        return {
+            ...subject,
+            teachers: [assignedTeacher] // Each section gets exactly one teacher per subject
+        };
+    });
+}
+
+// Function to update teacher usage tracking
+function updateTeacherUsage(timetable, teacherUsage) {
+    timetable.timetableGrid.forEach(row => {
+        row.forEach(cell => {
+            if (cell.subject && cell.teacher) {
+                const usageKey = `${cell.teacher}_${cell.subjectCode}`;
+                teacherUsage[usageKey] = (teacherUsage[usageKey] || 0) + 1;
+            }
+        });
+    });
+}
+
+// Enhanced allocation function with constraints for better timetable distribution
+function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
+    const { workingDays, maxHoursPerDay, globalTeacherSchedule } = data;
+    
+    // Use global teacher schedule if available (for multi-section), otherwise create local one
+    const teacherSchedule = globalTeacherSchedule || {};
+    const dailyAllocations = {}; // Track allocations per day
+    const dailySubjectCount = {}; // Track how many times each subject appears per day
+    
+    // Initialize tracking structures
+    for (let day = 0; day < workingDays; day++) {
+        dailyAllocations[day] = 0;
+        dailySubjectCount[day] = {};
+    }
+    
+    // Initialize global lab tracking for multiple sections
+    if (!data.globalLabTracker) {
+        data.globalLabTracker = {};
+    }
+    
+    // Sort allocation plan by priority and lab requirements
+    allocationPlan.sort((a, b) => {
+        // Labs with double duration get highest priority
+        if (a.isLab && a.labDuration === 'double' && (!b.isLab || b.labDuration !== 'double')) return -1;
+        if (b.isLab && b.labDuration === 'double' && (!a.isLab || a.labDuration !== 'double')) return 1;
+        
+        const priorityOrder = { high: 3, normal: 2, low: 1 };
+        return priorityOrder[b.priority] - priorityOrder[a.priority];
+    });
+    
+    // Helper function to check if placing a subject would create consecutive duplicates
+    function wouldCreateConsecutive(subject, day, period) {
+        // Check previous period (if exists)
+        if (period > 0 && grid[period - 1][day].subject === subject && !grid[period - 1][day].isLab) {
+            return true;
+        }
+        // Check next period (if exists) 
+        if (period < maxHoursPerDay - 1 && grid[period + 1][day].subject === subject && !grid[period + 1][day].isLab) {
+            return true;
+        }
+        return false;
+    }
+    
+    // Helper function to get diversity score for a day (higher = more diverse)
+    function getDiversityScore(day, excludePeriod = -1) {
+        const subjectsInDay = new Set();
+        for (let p = 0; p < maxHoursPerDay; p++) {
+            if (p !== excludePeriod && grid[p][day].subject && grid[p][day].subject !== 'OFF') {
+                subjectsInDay.add(grid[p][day].subject);
+            }
+        }
+        return subjectsInDay.size;
+    }
+    
+    // Helper function to find best slots for a subject (considering diversity and no consecutive rule)
+    function findBestSlots(allocation, isDoubleSlot = false) {
+        const candidates = [];
+        
+        for (let day = 0; day < workingDays; day++) {
+            if (dailyAllocations[day] >= maxHoursPerDay) continue;
+            
+            if (isDoubleSlot) {
+                // For double lab slots
+                for (let period = 0; period < maxHoursPerDay - 1; period++) {
+                    if (!grid[period][day].subject && !grid[period + 1][day].subject) {
+                        const teacherKey1 = `${allocation.teacher}_${day}_${period}`;
+                        const teacherKey2 = `${allocation.teacher}_${day}_${period + 1}`;
+                        
+                        if (!teacherSchedule[teacherKey1] && !teacherSchedule[teacherKey2] && 
+                            dailyAllocations[day] + 2 <= maxHoursPerDay) {
+                            
+                            // Track lab distribution across sections
+                            const labKey = `${allocation.subjectCode}_lab`;
+                            const currentLabCount = data.globalLabTracker[labKey] || 0;
+                            
+                            candidates.push({
+                                day,
+                                period,
+                                priority: 100, // Labs get highest priority
+                                labCount: currentLabCount
+                            });
+                        }
+                    }
+                }
+            } else {
+                // For regular subjects
+                for (let period = 0; period < maxHoursPerDay; period++) {
+                    if (!grid[period][day].subject) {
+                        const teacherKey = `${allocation.teacher}_${day}_${period}`;
+                        
+                        if (!teacherSchedule[teacherKey] && dailyAllocations[day] + 1 <= maxHoursPerDay) {
+                            let score = 0;
+                            
+                            // Heavily penalize consecutive same subjects
+                            if (wouldCreateConsecutive(allocation.subject, day, period)) {
+                                score -= 1000;
+                            }
+                            
+                            // Reward diversity (fewer of this subject in the day)
+                            const subjectCountInDay = dailySubjectCount[day][allocation.subject] || 0;
+                            score += (5 - subjectCountInDay) * 10;
+                            
+                            // Reward overall day diversity
+                            score += getDiversityScore(day, period) * 5;
+                            
+                            // For high priority subjects, add randomness to avoid clustering on specific days
+                            if (allocation.priority === 'high') {
+                                // Add random factor to distribute high priority subjects across all days
+                                score += Math.random() * 20;
+                                // Remove the day preference that was causing Friday clustering
+                            } else {
+                                // Keep slight preference for spreading across different days for normal subjects
+                                score += (workingDays - day) * 2;
+                            }
+                            
+                            candidates.push({
+                                day,
+                                period,
+                                priority: score
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Sort candidates by priority (higher is better)
+        candidates.sort((a, b) => {
+            if (isDoubleSlot) {
+                // For labs, prioritize balanced distribution across sections
+                return (a.labCount || 0) - (b.labCount || 0);
+            }
+            return b.priority - a.priority;
+        });
+        
+        return candidates;
+    }
+    
+    for (const allocation of allocationPlan) {
+        let allocated = false;
+        
+        if (allocation.isLab && allocation.labDuration === 'double') {
+            // Handle double-period labs
+            const candidates = findBestSlots(allocation, true);
+            
+            for (const candidate of candidates) {
+                const { day, period } = candidate;
+                
+                // Allocate both periods for lab
+                grid[period][day] = {
+                    subject: allocation.subject,
+                    subjectCode: allocation.subjectCode,
+                    teacher: allocation.teacher,
+                    isBreak: false,
+                    isLab: true,
+                    labPart: 1
+                };
+                grid[period + 1][day] = {
+                    subject: allocation.subject,
+                    subjectCode: allocation.subjectCode,
+                    teacher: allocation.teacher,
+                    isBreak: false,
+                    isLab: true,
+                    labPart: 2
+                };
+                
+                const teacherKey1 = `${allocation.teacher}_${day}_${period}`;
+                const teacherKey2 = `${allocation.teacher}_${day}_${period + 1}`;
+                teacherSchedule[teacherKey1] = true;
+                teacherSchedule[teacherKey2] = true;
+                dailyAllocations[day] += 2;
+                
+                // Track lab allocation for section balancing
+                const labKey = `${allocation.subjectCode}_lab`;
+                data.globalLabTracker[labKey] = (data.globalLabTracker[labKey] || 0) + 1;
+                
+                allocation.allocated = true;
+                allocated = true;
+                break;
+            }
+        } else {
+            // Handle regular theory subjects with enhanced constraints
+            const candidates = findBestSlots(allocation, false);
+            
+            for (const candidate of candidates) {
+                const { day, period } = candidate;
+                
+                if (data.sectionNumber) {
+                    console.log(`✓ Section ${data.sectionNumber}: ${allocation.teacher} allocated to Day ${day+1} Period ${period+1} for ${allocation.subject}`);
+                }
+                
+                // Allocate the slot
+                grid[period][day] = {
+                    subject: allocation.subject,
+                    subjectCode: allocation.subjectCode,
+                    teacher: allocation.teacher,
+                    isBreak: false
+                };
+                
+                const teacherKey = `${allocation.teacher}_${day}_${period}`;
+                teacherSchedule[teacherKey] = true;
+                dailyAllocations[day] += 1;
+                
+                // Update daily subject count
+                if (!dailySubjectCount[day][allocation.subject]) {
+                    dailySubjectCount[day][allocation.subject] = 0;
+                }
+                dailySubjectCount[day][allocation.subject]++;
+                
+                allocation.allocated = true;
+                allocated = true;
+                break;
+            }
+        }
+        
+        if (!allocated) {
+            console.warn('Could not allocate with constraints:', allocation);
+        }
+    }
+    
+    // Before filling with "OFF", check for high priority subjects that can fill empty slots
+    const emptySlots = [];
+    for (let day = 0; day < workingDays; day++) {
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            if (!grid[period][day].subject) {
+                emptySlots.push({ day, period });
+            }
+        }
+    }
+    
+    // If there are empty slots and high priority subjects exist, fill them
+    if (emptySlots.length > 0 && data.subjects) {
+        const highPrioritySubjects = data.subjects.filter(subject => subject.priority === 'high');
+        
+        if (highPrioritySubjects.length > 0) {
+            console.log(`Found ${emptySlots.length} empty slots to fill with ${highPrioritySubjects.length} high priority subjects`);
+            
+            // Shuffle empty slots to ensure random distribution across days
+            for (let i = emptySlots.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [emptySlots[i], emptySlots[j]] = [emptySlots[j], emptySlots[i]];
+            }
+            
+            // Distribute empty slots equally among high priority subjects
+            const slotsPerSubject = Math.floor(emptySlots.length / highPrioritySubjects.length);
+            const leftoverSlots = emptySlots.length % highPrioritySubjects.length;
+            
+            let slotIndex = 0;
+            highPrioritySubjects.forEach((subject, subjectIndex) => {
+                const slotsForThisSubject = slotsPerSubject + (subjectIndex < leftoverSlots ? 1 : 0);
+                
+                for (let i = 0; i < slotsForThisSubject && slotIndex < emptySlots.length; i++) {
+                    const slot = emptySlots[slotIndex];
+                    const teacher = subject.teachers[i % subject.teachers.length]; // Rotate through teachers
+                    
+                    // Check teacher availability across sections for this time slot
+                    const teacherKey = `${teacher}_${slot.day}_${slot.period}`;
+                    
+                    if (!teacherSchedule[teacherKey]) {
+                        grid[slot.period][slot.day] = {
+                            subject: subject.name,
+                            subjectCode: subject.code,
+                            teacher: teacher,
+                            isBreak: false,
+                            priority: 'high'
+                        };
+                        
+                        // Mark teacher as busy at this time
+                        teacherSchedule[teacherKey] = true;
+                        slotIndex++;
+                    } else {
+                        // If teacher is busy, try next slot
+                        i--;
+                    }
+                }
+            });
+            
+            console.log(`Filled ${slotIndex} empty slots with high priority subjects randomly distributed`);
+        }
+    }
+    
+    // Fill remaining available slots with "OFF" - but only up to maxHoursPerDay per day
+    for (let day = 0; day < workingDays; day++) {
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            if (!grid[period][day].subject) {
+                grid[period][day] = {
+                    subject: 'OFF',
+                    teacher: '',
+                    subjectCode: '',
+                    isBreak: false
+                };
+            }
+        }
+    }
+    
+    return true;
+}
+
+// Function to display multiple section timetables
+function displayMultipleSectionTimetables(sectionTimetables) {
+    const container = document.getElementById('timetableContainer');
+    const exportButtons = document.getElementById('exportButtons');
+    
+    // Show export buttons
+    if (exportButtons) {
+        exportButtons.style.display = 'block';
+    }
+    
+    let html = '<div class="multiple-sections-container">';
+    
+    sectionTimetables.sections.forEach((section, index) => {
+        html += `
+            <div class="section-timetable mb-4">
+                <h4 class="section-title mb-3">
+                    <i class="fas fa-users me-2"></i>${section.className}
+                </h4>
+                ${generateTimetableHTML(section)}
+            </div>
+        `;
+        
+        if (index < sectionTimetables.sections.length - 1) {
+            html += '<hr class="section-divider">';
+        }
+    });
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// Function to calculate actual time based on start time and lecture duration
+function calculateTimeSlot(startTime, periodIndex, lectureDuration) {
+    const [hours, minutes] = startTime.split(':').map(Number);
+    const startMinutes = hours * 60 + minutes;
+    
+    const startSlotMinutes = startMinutes + (periodIndex * lectureDuration);
+    const endSlotMinutes = startSlotMinutes + lectureDuration;
+    
+    const formatTime = (totalMinutes) => {
+        const h = Math.floor(totalMinutes / 60) % 24;
+        const m = totalMinutes % 60;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+    
+    return `${formatTime(startSlotMinutes)} - ${formatTime(endSlotMinutes)}`;
+}
+
+// Updated function to generate timetable HTML exactly matching the college format from the image
+function generateTimetableHTML(timetable) {
+    const { timetableGrid, workingDays, startTime, lectureDuration, breakEnabled, breakStart, breakDurationMinutes } = timetable;
+    const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    
+    let html = '<div class="table-responsive">';
+    html += '<table class="table table-bordered college-timetable-table">';
+    
+    // Header row with time slots
+    html += '<thead><tr>';
+    html += '<th class="day-time-header">DAY \\ TIME</th>';
+    
+    // Calculate and display time slots
+    const [hours, minutes] = startTime.split(':').map(Number);
+    let currentMinutes = hours * 60 + minutes;
+    
+    for (let period = 0; period < timetable.maxHoursPerDay; period++) {
+        // Add break before this period if it's the break period
+        if (breakEnabled && period === breakStart && breakDurationMinutes) {
+            const breakStartTime = formatTime(currentMinutes);
+            const breakEndTime = formatTime(currentMinutes + breakDurationMinutes);
+            html += `<th class="break-header">BREAK<br><small>(${breakStartTime}-${breakEndTime})</small></th>`;
+            currentMinutes += breakDurationMinutes;
+        }
+        
+        // Add regular period header
+        const periodStartTime = formatTime(currentMinutes);
+        const periodEndTime = formatTime(currentMinutes + lectureDuration);
+        html += `<th class="time-header">${periodStartTime}-${periodEndTime}</th>`;
+        currentMinutes += lectureDuration;
+    }
+    html += '</tr></thead><tbody>';
+    
+    // Data rows - each day as a row
+    for (let day = 0; day < workingDays; day++) {
+        html += '<tr>';
+        html += `<td class="day-cell">${days[day]}</td>`;
+        
+        // Reset time tracking for break insertion
+        let currentPeriodMinutes = (hours * 60 + minutes);
+        
+        for (let period = 0; period < timetable.maxHoursPerDay; period++) {
+            // Add break cell if this is the break period
+            if (breakEnabled && period === breakStart && breakDurationMinutes) {
+                html += `<td class="break-cell">BREAK</td>`;
+                currentPeriodMinutes += breakDurationMinutes;
+            }
+            
+            const cell = timetableGrid[period][day];
+            let cellClass = 'subject-cell';
+            let cellContent = '';
+            
+            if (cell.isBreak) {
+                // Skip break cells as they're handled above
+                continue;
+            } else if (cell.subject === 'Free' || !cell.subject) {
+                cellContent = 'OFF';
+                cellClass += ' off-cell';
+            } else if (cell.subject) {
+                if (cell.isLab) {
+                    cellClass += ' lab-cell';
+                    if (cell.labPart === 1) {
+                        cellContent = `${cell.subjectCode}<br><small>${cell.subject} LAB</small><br><small>${getShortName(cell.teacher)}</small>`;
+                    } else {
+                        cellContent = `${cell.subjectCode}(CONT)<br><small>${cell.subject} LAB</small><br><small>${getShortName(cell.teacher)}</small>`;
+                    }
+                } else {
+                    cellContent = `${cell.subjectCode}<br><small>${cell.subject}</small><br><small>${getShortName(cell.teacher)}</small>`;
+                }
+            }
+            
+            html += `<td class="${cellClass}">${cellContent}</td>`;
+            currentPeriodMinutes += lectureDuration;
+        }
+        html += '</tr>';
+    }
+    
+    html += '</tbody></table></div>';
+    return html;
+}
+
+// Function to calculate all time slots including breaks
+function calculateAllTimeSlots(startTime, maxPeriods, lectureDuration, breakEnabled, breakStart, breakDurationMinutes) {
+    const timeSlots = [];
+    const [hours, minutes] = startTime.split(':').map(Number);
+    let currentMinutes = hours * 60 + minutes;
+    
+    for (let period = 0; period < maxPeriods; period++) {
+        // Add break before this period if it's the break period
+        if (breakEnabled && period === breakStart && breakDurationMinutes) {
+            const breakStartTime = formatTime(currentMinutes);
+            const breakEndTime = formatTime(currentMinutes + breakDurationMinutes);
+            timeSlots.push({
+                time: `${breakStartTime} - ${breakEndTime}`,
+                isBreak: true
+            });
+            currentMinutes += breakDurationMinutes;
+        }
+        
+        // Add regular period
+        const periodStartTime = formatTime(currentMinutes);
+        const periodEndTime = formatTime(currentMinutes + lectureDuration);
+        timeSlots.push({
+            time: `${periodStartTime} - ${periodEndTime}`,
+            isBreak: false
+        });
+        currentMinutes += lectureDuration;
+    }
+    
+    return timeSlots;
+}
+
+// Helper function to get short name (initials or first name)
+function getShortName(fullName) {
+    if (!fullName) return '';
+    
+    const words = fullName.trim().split(' ');
+    if (words.length === 1) {
+        // Single word - return first 8 characters
+        return words[0].substring(0, 8);
+    } else {
+        // Multiple words - return initials
+        return words.map(word => word.charAt(0).toUpperCase()).join('.');
+    }
+}
+
+// Helper function to format time
+function formatTime(totalMinutes) {
+    const hours = Math.floor(totalMinutes / 60) % 24;
+    const mins = totalMinutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+}
+
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+}
+
+function displayTimetable(timetableData) {
+    const container = document.getElementById('timetableContainer');
+    const exportButtons = document.getElementById('exportButtons');
+    
+    if (!container) return;
+    
+    currentTimetableData = timetableData;
+    
+    // Generate timetable HTML with time display
+    const timetableHtml = generateTimetableHTML(timetableData);
+    container.innerHTML = timetableHtml;
+    
+    // Show export buttons
+    if (exportButtons) {
+        exportButtons.style.display = 'block';
+    }
+    
+    // Add animation to the timetable
+    const table = container.querySelector('.timetable-table');
+    if (table) {
+        table.classList.add('animate-fade-in');
+    }
+}
+
+function exportTimetable(format) {
+    if (!currentTimetableData) {
+        showToast('No timetable to export', 'warning');
+        return;
+    }
+    
+    exportTimetableData(currentTimetableData, format);
+}
+
+// Initialize generator when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    // This will be called from the individual timetable pages
+    // with the appropriate generator type
+});
+
+// Export generator functions
+window.GeneratorModule = {
+    initializeGenerator,
+    addSubject,
+    removeSubject,
+    addTeacherToSubject,
+    removeTeacher,
+    toggleLabOptions,
+    handleTimetableGeneration,
+    exportTimetable,
+    loadSavedSubjects
+};

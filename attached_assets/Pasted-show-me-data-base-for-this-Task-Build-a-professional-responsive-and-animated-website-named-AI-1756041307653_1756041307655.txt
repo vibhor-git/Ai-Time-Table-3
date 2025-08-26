@@ -1,0 +1,193 @@
+show me data base for this- Task
+
+Build a professional, responsive, and animated website named “AI Timetable Generator” for colleges and schools.
+
+Tech Stack
+
+Frontend: HTML, CSS, JavaScript
+
+Backend: Python (Flask or FastAPI recommended)
+
+Data Handling: LocalStorage (login/signup, user profile, subjects/teachers, generator inputs, timetables, history)
+
+Export: Generate and download formatted PDF and Excel (.xlsx) timetables
+
+Core Features
+Authentication (Signup & Login)
+
+Store user credentials in LocalStorage.
+
+On successful login, redirect to Dashboard.
+
+Clean, animated UI forms with validation.
+
+Dashboard
+
+Options:
+
+Create Timetable (Course-wise)
+
+Create Timetable (Class/Section-wise)
+
+Manage Subjects & Teachers
+
+View/Update Timetables (History)
+
+Download Timetable (PDF / Excel)
+
+Prominent “Generate Timetable” button on the generator pages.
+
+Timetable Generator Inputs (Forms)
+
+Number of working days per week
+
+Course name (e.g., BCA, B.Tech)
+
+Class name & Section name
+
+Subject names + subject codes
+
+Teacher names (subject-wise)
+
+Multiple teachers for the same subject (split sections fairly)
+
+Option to increase/decrease number of teachers per subject
+
+Option to specify number of free lectures
+
+Max hours per day per class
+
+Break/Recess options:
+
+Enable/disable break
+
+Break start period (or time index)
+
+Break duration (in periods)
+
+Timetable Generation Logic
+
+Evenly allocate classes across working days.
+
+If multiple teachers exist for a subject:
+
+Divide classes fairly among teachers.
+
+Ensure no teacher/class double-booking.
+
+Handle free lecture allocation automatically.
+
+Respect Max hours/day and Break/Recess slot(s) (treat break as a fixed, non-assignable period).
+
+Output
+
+Display timetable in a clean grid/table (subject code, subject name, teacher, class/section).
+
+Generate Timetable button triggers creation + render.
+
+Download:
+
+PDF (well-formatted, easy to read/print)
+
+Excel (.xlsx) (structured sheet, one sheet per class/section/course as applicable)
+
+History, Auto-Save & Update (LocalStorage)
+
+Auto-save every time a timetable is generated or Subjects & Teachers are saved/updated.
+
+Save into aitt-history with fields: id, title, createdAt, data.
+
+View History page:
+
+List all saved entries from the beginning (no truncation).
+
+Actions per entry: View, Edit/Update, Delete, Download (PDF/Excel).
+
+Edit/Update existing timetables:
+
+Inline edit or form re-load → on save, create a new snapshot in history (do not overwrite old by default).
+
+Delete action removes a specific snapshot from aitt-history.
+
+UI & UX Requirements
+
+Modern & Professional Design (preserve existing theme/colors; dark/light toggle optional).
+
+Responsive (desktop, tablet, mobile).
+
+Animations:
+
+Smooth form transitions
+
+Hover effects
+
+Animated buttons
+
+Navigation bar with logo & menu.
+
+Footer with copyright.
+
+Backend (Export Service)
+
+REST endpoints (example):
+
+POST /export/pdf → returns generated PDF (landscape A4, headers, grid, break cells marked).
+
+POST /export/excel → returns .xlsx (styles for headers, break cells).
+
+CORS enabled for local dev.
+
+Input payload mirrors the timetable data structure rendered on the frontend.
+
+Data Keys (LocalStorage)
+
+aitt-users (array of users)
+
+aitt-session (current session)
+
+aitt-subjects-teachers (managed data)
+
+aitt-history (array of snapshots; auto-append on every generate/save)
+
+Folder Structure
+/frontend
+  index.html
+  dashboard.html
+  timetable_course.html
+  timetable_class.html
+  manage.html
+  history.html
+  /css
+    style.css
+  /js
+    auth.js
+    dashboard.js
+    generator.js   // includes saveTimetableToHistory(), history helpers
+    manage.js
+/assets
+  logo.svg
+  icons/...
+/backend
+  app.py
+  requirements.txt
+README.md
+
+Acceptance Criteria
+
+Sign up/login works with LocalStorage; login redirects to Dashboard.
+
+Timetable pages have a Generate Timetable button that:
+
+creates timetable honoring break and constraints,
+
+renders grid output,
+
+auto-saves a snapshot to aitt-history.
+
+Managing Subjects & Teachers auto-saves a snapshot to history.
+
+History page shows all past snapshots, with View, Edit/Update, Delete, Download PDF/Excel.
+
+PDF & Excel exports produce readable, structured outputs matching the rendered timetable.
+
+Fully responsive, animated UI; no theme/color changes from the current design unless explicitly toggled by dark/light mode.
