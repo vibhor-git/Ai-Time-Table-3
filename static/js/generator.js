@@ -780,194 +780,11 @@ function distributeTeachersSimple(subjects, sectionNumber, totalSections) {
 
 // Simplified timetable generation to prevent infinite loops
 function generateSimpleTimetable(data) {
-    const { workingDays, maxHoursPerDay, subjects } = data;
-    
-    // Initialize grid
-    const grid = [];
-    for (let period = 0; period < maxHoursPerDay; period++) {
-        const row = [];
-        for (let day = 0; day < workingDays; day++) {
-            row.push({ subject: null, teacher: null, subjectCode: null, isBreak: false });
-        }
-        grid.push(row);
-    }
-    
-    // Create allocation plan with lab duration support - respect freeLectures setting
-    const allocationPlan = [];
-    const totalSlots = workingDays * maxHoursPerDay;
-    const maxFreeLecturesAllowed = parseInt(data.freeLectures) || 0;
-    const availableSlots = totalSlots - maxFreeLecturesAllowed;
-    const slotsPerSubject = Math.floor(availableSlots / subjects.length);
-    
-    // For single timetables, create consistent allocation plan
-    subjects.forEach(subject => {
-        const teacher = subject.teachers[0]; // Use first teacher
-        const isDoubleLab = subject.isLab && subject.labDuration === 'double';
-        
-        if (isDoubleLab) {
-            // For double duration labs, create half the sessions but each takes 2 slots
-            const labSessions = Math.floor(slotsPerSubject / 2);
-            console.log(`Single Timetable: ${subject.name} = ${labSessions} double-lab sessions (${labSessions * 2} total periods)`);
-            for (let i = 0; i < labSessions; i++) {
-                allocationPlan.push({
-                    subject: subject.name,
-                    teacher: teacher,
-                    subjectCode: subject.code,
-                    isLab: true,
-                    isDouble: true,
-                    labDuration: 'double'
-                });
-            }
-        } else {
-            // Regular subjects or single-period labs
-            console.log(`Single Timetable: ${subject.name} = ${slotsPerSubject} ${subject.isLab ? 'single-lab' : 'theory'} sessions`);
-            for (let i = 0; i < slotsPerSubject; i++) {
-                allocationPlan.push({
-                    subject: subject.name,
-                    teacher: teacher,
-                    subjectCode: subject.code,
-                    isLab: subject.isLab || false,
-                    isDouble: false,
-                    labDuration: subject.labDuration || 'regular'
-                });
-            }
-        }
-    });
-    
-    // Allocate subjects with lab support
-    let currentDay = 0;
-    let currentPeriod = 0;
-    
-    for (const allocation of allocationPlan) {
-        let allocated = false;
-        let attempts = 0;
-        const maxAttempts = totalSlots;
-        
-        while (!allocated && attempts < maxAttempts) {
-            if (allocation.isDouble) {
-                // Need 2 consecutive periods for double lab (avoid breaks)
-                if (currentPeriod < maxHoursPerDay - 1 && 
-                    !grid[currentPeriod][currentDay].subject && 
-                    !grid[currentPeriod + 1][currentDay].subject) {
-                    
-                    // Skip if break would be between the two periods
-                    if (data.breakEnabled && 
-                        (currentPeriod === data.breakStart - 1 || currentPeriod + 1 === data.breakStart)) {
-                        // Skip this slot, continue searching
-                    } else {
-                        // Allocate double lab
-                        grid[currentPeriod][currentDay] = {
-                            subject: allocation.subject,
-                            teacher: allocation.teacher,
-                            subjectCode: allocation.subjectCode,
-                            isBreak: false,
-                            isLab: true,
-                            labPart: 1,
-                            labDuration: 'double'
-                        };
-                        
-                        grid[currentPeriod + 1][currentDay] = {
-                            subject: allocation.subject,
-                            teacher: allocation.teacher,
-                            subjectCode: allocation.subjectCode,
-                            isBreak: false,
-                            isLab: true,
-                            labPart: 2,
-                            labDuration: 'double'
-                        };
-                        
-                        allocated = true;
-                        console.log(`Allocated DOUBLE LAB: ${allocation.subject} on Day ${currentDay+1} Period ${currentPeriod+1}-${currentPeriod+2}`);
-                    }
-                }
-            } else {
-                // Regular allocation
-                if (!grid[currentPeriod][currentDay].subject) {
-                    grid[currentPeriod][currentDay] = {
-                        subject: allocation.subject,
-                        teacher: allocation.teacher,
-                        subjectCode: allocation.subjectCode,
-                        isBreak: false,
-                        isLab: allocation.isLab,
-                        labDuration: allocation.labDuration
-                    };
-                    allocated = true;
-                }
-            }
-            
-            // Move to next slot
-            currentPeriod++;
-            if (currentPeriod >= maxHoursPerDay) {
-                currentPeriod = 0;
-                currentDay++;
-                if (currentDay >= workingDays) {
-                    currentDay = 0;
-                }
-            }
-            
-            attempts++;
-        }
-        
-        if (!allocated) {
-            console.warn(`Could not allocate ${allocation.subject} (${allocation.isDouble ? 'Double Lab' : 'Regular'})`);
-        }
-    }
-    
-    // Handle remaining empty slots based on freeLectures setting
-    const maxFreeLectures = parseInt(data.freeLectures) || 0;
-    let freeSlotsFilled = 0;
-    const emptySlots = [];
-    
-    // First, collect all empty slots
-    for (let period = 0; period < maxHoursPerDay; period++) {
-        for (let day = 0; day < workingDays; day++) {
-            if (!grid[period][day].subject) {
-                remainingEmptySlots.push({period, day});
-            }
-        }
-    }
-    
-    console.log(`Found ${emptySlots.length} empty slots, freeLectures setting: ${maxFreeLectures}`);
-    
-    // Fill slots based on freeLectures setting
-    for (let i = 0; i < emptySlots.length; i++) {
-        const {period, day} = emptySlots[i];
-        
-        if (freeSlotsFilled < maxFreeLectures) {
-            // Fill with "Free" period
-            grid[period][day] = {
-                subject: 'Free',
-                teacher: '',
-                subjectCode: '',
-                isBreak: false
-            };
-            freeSlotsFilled++;
-        } else {
-            // Fill with high priority subjects (or any subject if no high priority)
-            const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
-            const subjectsToUse = highPrioritySubjects.length > 0 ? highPrioritySubjects : data.subjects;
-            
-            const randomSubject = subjectsToUse[Math.floor(Math.random() * subjectsToUse.length)];
-            const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
-            
-            grid[period][day] = {
-                subject: randomSubject.name,
-                teacher: randomTeacher,
-                subjectCode: randomSubject.code,
-                isBreak: false
-            };
-        }
-    }
-    
-    console.log(`Filled ${freeSlotsFilled} free slots and ${emptySlots.length - freeSlotsFilled} subject slots`);
-    
-    return {
-        ...data,
-        timetableGrid: grid
-    };
+    console.log('\n=== USING SIMPLE TIMETABLE GENERATION ===');
+    return generateConflictFreeTimetable(data);
 }
 
-// NEW GUARANTEED CONSISTENT TIMETABLE GENERATOR
+// NEW ADVANCED TIMETABLE GENERATOR WITH PROPER FREE LECTURE HANDLING
 function generateConflictFreeTimetable(data) {
     const { workingDays, maxHoursPerDay, subjects } = data;
     
@@ -981,23 +798,27 @@ function generateConflictFreeTimetable(data) {
         grid.push(row);
     }
     
-    // STEP 1: Calculate total available periods
-    const totalSlots = workingDays * maxHoursPerDay;
+    // STEP 1: Handle Free Lectures Logic
     const freeLectures = parseInt(data.freeLectures) || 0;
     let totalBreakPeriods = 0;
     if (data.breakEnabled) {
         totalBreakPeriods = workingDays; // One break per day
     }
     
-    const availableForSubjects = totalSlots - totalBreakPeriods - freeLectures;
-    
-    console.log(`\n=== SECTION ${data.sectionNumber} ALLOCATION CALCULATION ===`);
+    console.log(`\n=== ADVANCED TIMETABLE GENERATION FOR SECTION ${data.sectionNumber || 1} ===`);
     console.log(`Working days: ${workingDays}, Max hours per day: ${maxHoursPerDay}`);
-    console.log(`Total slots: ${totalSlots}`);
+    console.log(`Free lectures requested: ${freeLectures}`);
     console.log(`Break periods: ${totalBreakPeriods}`);
-    console.log(`Free lectures: ${freeLectures}`);
-    console.log(`Available for subjects: ${availableForSubjects}`);
     console.log(`Number of subjects: ${subjects.length}`);
+    
+    // Implement the new free lecture logic
+    if (freeLectures === 0) {
+        console.log('FREE LECTURES = 0: All periods will be filled with subjects');
+        return generateFullSchedule(grid, data, subjects, workingDays, maxHoursPerDay, totalBreakPeriods);
+    } else {
+        console.log(`FREE LECTURES = ${freeLectures}: Will have ${freeLectures} completely free days`);
+        return generateScheduleWithFreeDays(grid, data, subjects, workingDays, maxHoursPerDay, totalBreakPeriods, freeLectures);
+    }
     
     // STEP 2: Create MASTER ALLOCATION PLAN (same for ALL sections)
     if (!window.MASTER_ALLOCATION_PLAN) {
@@ -1934,6 +1755,310 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
     console.log(`Final grid check - all slots filled: ${remainingEmptySlots.length} slots processed`);
     
     return true;
+}
+
+// FUNCTION: Generate full schedule when freeLectures = 0
+function generateFullSchedule(grid, data, subjects, workingDays, maxHoursPerDay, totalBreakPeriods) {
+    console.log('\n=== GENERATING FULL SCHEDULE (NO FREE PERIODS) ===');
+    
+    // Calculate total available slots for subjects
+    const totalSlots = workingDays * maxHoursPerDay - totalBreakPeriods;
+    
+    // Separate subjects by priority
+    const highPrioritySubjects = subjects.filter(s => s.priority === 'High');
+    const mediumPrioritySubjects = subjects.filter(s => s.priority === 'Medium');
+    const lowPrioritySubjects = subjects.filter(s => s.priority === 'Low');
+    
+    console.log(`Priority breakdown: High=${highPrioritySubjects.length}, Medium=${mediumPrioritySubjects.length}, Low=${lowPrioritySubjects.length}`);
+    
+    // Calculate periods per subject with priority weighting
+    const basePeriodsPerSubject = Math.floor(totalSlots / subjects.length);
+    const extraPeriods = totalSlots % subjects.length;
+    
+    // Create allocation plan
+    const allocationPlan = [];
+    
+    subjects.forEach((subject, index) => {
+        let periodsForSubject = basePeriodsPerSubject;
+        
+        // Give extra periods to high priority subjects first
+        if (subject.priority === 'High' && highPrioritySubjects.indexOf(subject) < extraPeriods) {
+            periodsForSubject++;
+        } else if (subject.priority === 'Medium' && highPrioritySubjects.length === 0 && mediumPrioritySubjects.indexOf(subject) < extraPeriods) {
+            periodsForSubject++;
+        } else if (subject.priority === 'Low' && highPrioritySubjects.length === 0 && mediumPrioritySubjects.length === 0 && lowPrioritySubjects.indexOf(subject) < extraPeriods) {
+            periodsForSubject++;
+        }
+        
+        console.log(`${subject.name} (${subject.priority}): ${periodsForSubject} periods`);
+        
+        // Add periods to allocation plan
+        for (let i = 0; i < periodsForSubject; i++) {
+            allocationPlan.push({
+                subject: subject.name,
+                subjectCode: subject.code,
+                teacher: subject.teachers[i % subject.teachers.length],
+                priority: subject.priority,
+                isLab: subject.isLab || false
+            });
+        }
+    });
+    
+    // Distribute subjects evenly across the week to avoid clustering
+    distributeSubjectsEvenly(grid, allocationPlan, data, workingDays, maxHoursPerDay);
+    
+    return {
+        ...data,
+        timetableGrid: grid
+    };
+}
+
+// FUNCTION: Generate schedule with specific number of free days
+function generateScheduleWithFreeDays(grid, data, subjects, workingDays, maxHoursPerDay, totalBreakPeriods, freeLectures) {
+    console.log(`\n=== GENERATING SCHEDULE WITH ${freeLectures} FREE DAYS ===`);
+    
+    // Randomly select which days will be completely free
+    const freeDays = [];
+    const availableDays = Array.from({length: workingDays}, (_, i) => i);
+    
+    for (let i = 0; i < Math.min(freeLectures, workingDays); i++) {
+        const randomIndex = Math.floor(Math.random() * availableDays.length);
+        freeDays.push(availableDays.splice(randomIndex, 1)[0]);
+    }
+    
+    console.log(`Free days selected: ${freeDays.map(d => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][d]).join(', ')}`);
+    
+    // Mark free days in grid
+    freeDays.forEach(day => {
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            if (!data.breakEnabled || period !== data.breakStart) {
+                grid[period][day] = {
+                    subject: 'Free',
+                    teacher: '',
+                    subjectCode: '',
+                    isBreak: false
+                };
+            }
+        }
+    });
+    
+    // Calculate available slots for subjects (excluding free days)
+    const workingDaysCount = workingDays - freeDays.length;
+    const totalSlots = workingDaysCount * maxHoursPerDay - (data.breakEnabled ? workingDaysCount : 0);
+    
+    // Create allocation plan for remaining days
+    const allocationPlan = [];
+    const basePeriodsPerSubject = Math.floor(totalSlots / subjects.length);
+    const extraPeriods = totalSlots % subjects.length;
+    
+    // Separate subjects by priority
+    const highPrioritySubjects = subjects.filter(s => s.priority === 'High');
+    
+    subjects.forEach((subject, index) => {
+        let periodsForSubject = basePeriodsPerSubject;
+        
+        // Give extra periods to high priority subjects
+        if (subject.priority === 'High' && highPrioritySubjects.indexOf(subject) < extraPeriods) {
+            periodsForSubject++;
+        }
+        
+        console.log(`${subject.name} (${subject.priority}): ${periodsForSubject} periods`);
+        
+        for (let i = 0; i < periodsForSubject; i++) {
+            allocationPlan.push({
+                subject: subject.name,
+                subjectCode: subject.code,
+                teacher: subject.teachers[i % subject.teachers.length],
+                priority: subject.priority,
+                isLab: subject.isLab || false
+            });
+        }
+    });
+    
+    // Distribute subjects only on working days, avoiding free days
+    distributeSubjectsOnWorkingDays(grid, allocationPlan, data, workingDays, maxHoursPerDay, freeDays);
+    
+    return {
+        ...data,
+        timetableGrid: grid
+    };
+}
+
+// FUNCTION: Distribute subjects evenly across all days (freeLectures = 0)
+function distributeSubjectsEvenly(grid, allocationPlan, data, workingDays, maxHoursPerDay) {
+    console.log('\n=== DISTRIBUTING SUBJECTS EVENLY ACROSS WEEK ===');
+    
+    // Group allocations by subject for even distribution
+    const subjectGroups = {};
+    allocationPlan.forEach(allocation => {
+        if (!subjectGroups[allocation.subject]) {
+            subjectGroups[allocation.subject] = [];
+        }
+        subjectGroups[allocation.subject].push(allocation);
+    });
+    
+    // Track daily allocation count to ensure even distribution
+    const dailyCount = Array(workingDays).fill(0);
+    const subjectDailyCount = {};
+    
+    // Initialize subject daily tracking
+    Object.keys(subjectGroups).forEach(subject => {
+        subjectDailyCount[subject] = Array(workingDays).fill(0);
+    });
+    
+    // Allocate high priority subjects first, spreading them evenly
+    const highPriorityAllocations = allocationPlan.filter(a => a.priority === 'High');
+    allocateWithEvenDistribution(grid, highPriorityAllocations, data, workingDays, maxHoursPerDay, dailyCount, subjectDailyCount);
+    
+    // Then allocate medium and low priority subjects
+    const otherAllocations = allocationPlan.filter(a => a.priority !== 'High');
+    allocateWithEvenDistribution(grid, otherAllocations, data, workingDays, maxHoursPerDay, dailyCount, subjectDailyCount);
+    
+    console.log('Even distribution completed');
+}
+
+// FUNCTION: Distribute subjects only on working days (freeLectures > 0)
+function distributeSubjectsOnWorkingDays(grid, allocationPlan, data, workingDays, maxHoursPerDay, freeDays) {
+    console.log('\n=== DISTRIBUTING SUBJECTS ON WORKING DAYS ONLY ===');
+    
+    const workingDaysOnly = [];
+    for (let day = 0; day < workingDays; day++) {
+        if (!freeDays.includes(day)) {
+            workingDaysOnly.push(day);
+        }
+    }
+    
+    let allocationIndex = 0;
+    
+    // Fill working days with subjects
+    for (const day of workingDaysOnly) {
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            // Skip break periods
+            if (data.breakEnabled && period === data.breakStart) {
+                grid[period][day] = {
+                    subject: 'BREAK',
+                    teacher: '',
+                    subjectCode: '',
+                    isBreak: true
+                };
+                continue;
+            }
+            
+            // Allocate subject if available
+            if (allocationIndex < allocationPlan.length) {
+                const allocation = allocationPlan[allocationIndex];
+                grid[period][day] = {
+                    subject: allocation.subject,
+                    subjectCode: allocation.subjectCode,
+                    teacher: allocation.teacher,
+                    isBreak: false
+                };
+                allocationIndex++;
+            }
+        }
+    }
+    
+    console.log(`Allocated ${allocationIndex} subjects on working days`);
+}
+
+// FUNCTION: Allocate subjects with even distribution logic
+function allocateWithEvenDistribution(grid, allocations, data, workingDays, maxHoursPerDay, dailyCount, subjectDailyCount) {
+    // Sort allocations to prioritize high priority subjects
+    allocations.sort((a, b) => {
+        if (a.priority === 'High' && b.priority !== 'High') return -1;
+        if (a.priority !== 'High' && b.priority === 'High') return 1;
+        return 0;
+    });
+    
+    for (const allocation of allocations) {
+        let placed = false;
+        let attempts = 0;
+        const maxAttempts = workingDays * maxHoursPerDay;
+        
+        while (!placed && attempts < maxAttempts) {
+            // Find the day with the least allocations for even distribution
+            let bestDay = 0;
+            let minCount = dailyCount[0];
+            
+            for (let day = 1; day < workingDays; day++) {
+                if (dailyCount[day] < minCount) {
+                    minCount = dailyCount[day];
+                    bestDay = day;
+                }
+            }
+            
+            // Try to place on the best day
+            for (let period = 0; period < maxHoursPerDay; period++) {
+                // Skip break periods
+                if (data.breakEnabled && period === data.breakStart) {
+                    continue;
+                }
+                
+                // Check if slot is empty
+                if (!grid[period][bestDay].subject) {
+                    // Avoid placing same subject consecutively (unless it's a lab)
+                    if (period > 0 && grid[period - 1][bestDay].subject === allocation.subject && !allocation.isLab) {
+                        continue;
+                    }
+                    if (period < maxHoursPerDay - 1 && grid[period + 1][bestDay].subject === allocation.subject && !allocation.isLab) {
+                        continue;
+                    }
+                    
+                    // Place the subject
+                    grid[period][bestDay] = {
+                        subject: allocation.subject,
+                        subjectCode: allocation.subjectCode,
+                        teacher: allocation.teacher,
+                        isBreak: false
+                    };
+                    
+                    dailyCount[bestDay]++;
+                    subjectDailyCount[allocation.subject][bestDay]++;
+                    placed = true;
+                    break;
+                }
+            }
+            
+            attempts++;
+            if (!placed) {
+                // If we couldn't place on the best day, try any day
+                for (let day = 0; day < workingDays && !placed; day++) {
+                    for (let period = 0; period < maxHoursPerDay && !placed; period++) {
+                        if (data.breakEnabled && period === data.breakStart) continue;
+                        
+                        if (!grid[period][day].subject) {
+                            grid[period][day] = {
+                                subject: allocation.subject,
+                                subjectCode: allocation.subjectCode,
+                                teacher: allocation.teacher,
+                                isBreak: false
+                            };
+                            dailyCount[day]++;
+                            placed = true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (!placed) {
+            console.warn(`Could not place ${allocation.subject}`);
+        }
+    }
+}
+
+// Add breaks to the grid
+function addBreaksToGrid(grid, data, workingDays, maxHoursPerDay) {
+    if (data.breakEnabled && data.breakStart >= 0) {
+        for (let day = 0; day < workingDays; day++) {
+            grid[data.breakStart][day] = {
+                subject: 'BREAK',
+                teacher: '',
+                subjectCode: '',
+                isBreak: true
+            };
+        }
+    }
 }
 
 // Function to display multiple section timetables
