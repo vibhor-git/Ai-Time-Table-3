@@ -1140,7 +1140,19 @@ function generateConflictFreeTimetable(data) {
         
         if (!allocated) {
             const labInfo = allocation.isDouble ? ' (Double Lab)' : allocation.isLab ? ' (Lab)' : '';
-            console.warn(`Could not allocate ${allocation.subject}${labInfo} for ${allocation.teacher} in section ${data.sectionNumber} due to conflicts`);
+            console.error(`FAILED to allocate ${allocation.subject}${labInfo} for ${allocation.teacher} in section ${data.sectionNumber} due to conflicts`);
+            
+            // This is a critical error - we should not have unallocated items
+            // Log the current grid state for debugging
+            const occupiedSlots = [];
+            for (let p = 0; p < maxHoursPerDay; p++) {
+                for (let d = 0; d < workingDays; d++) {
+                    if (grid[p][d].subject && grid[p][d].subject !== 'Free') {
+                        occupiedSlots.push(`Day${d+1}P${p+1}:${grid[p][d].subject}`);
+                    }
+                }
+            }
+            console.error(`Section ${data.sectionNumber}: Currently occupied slots: ${occupiedSlots.join(', ')}`);
         }
     }
     
@@ -1157,6 +1169,29 @@ function generateConflictFreeTimetable(data) {
             }
         }
     }
+    
+    // FINAL VERIFICATION: Count actual allocated subjects in the grid
+    console.log(`=== FINAL VERIFICATION for Section ${data.sectionNumber} ===`);
+    const subjectCounts = {};
+    const labCounts = {};
+    
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        for (let day = 0; day < workingDays; day++) {
+            const cell = grid[period][day];
+            if (cell.subject && cell.subject !== 'Free') {
+                // Count regular subjects
+                subjectCounts[cell.subject] = (subjectCounts[cell.subject] || 0) + 1;
+                
+                // Count labs specifically
+                if (cell.isLab) {
+                    labCounts[cell.subject] = (labCounts[cell.subject] || 0) + 1;
+                }
+            }
+        }
+    }
+    
+    console.log(`Section ${data.sectionNumber} - Subject counts:`, subjectCounts);
+    console.log(`Section ${data.sectionNumber} - Lab counts:`, labCounts);
     
     return {
         ...data,
