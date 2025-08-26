@@ -983,14 +983,22 @@ function generateConflictFreeTimetable(data) {
         // Calculate minimum periods needed
         let periodsUsed = 0;
         
+        let remainingToDistribute = remainingPeriods;
+        
         subjects.forEach((subject, index) => {
             // Base allocation
             let subjectPeriods = periodsPerSubject;
             
             // Give extra periods to high priority subjects first
-            if (subject.priority === 'High' && remainingPeriods > 0) {
+            if (subject.priority === 'High' && remainingToDistribute > 0) {
                 subjectPeriods++;
-                remainingPeriods--;
+                remainingToDistribute--;
+            } else if (subject.priority === 'Medium' && remainingToDistribute > 0 && highPrioritySubjects.length === 0) {
+                subjectPeriods++;
+                remainingToDistribute--;
+            } else if (remainingToDistribute > 0 && highPrioritySubjects.length === 0 && mediumPrioritySubjects.length === 0) {
+                subjectPeriods++;
+                remainingToDistribute--;
             }
             
             // Handle lab configuration
@@ -1036,22 +1044,45 @@ function generateConflictFreeTimetable(data) {
             }
         });
         
-        // Fill remaining periods with high priority subjects
-        const remainingToDistribute = availableForSubjects - periodsUsed;
-        console.log(`Periods used: ${periodsUsed}, Remaining to distribute: ${remainingToDistribute}`);
+        // FORCE DISTRIBUTE ALL REMAINING PERIODS to ensure no OFF periods
+        const actualRemainingToDistribute = availableForSubjects - periodsUsed;
+        console.log(`Periods used: ${periodsUsed}, Remaining MUST distribute: ${actualRemainingToDistribute}`);
         
-        if (remainingToDistribute > 0 && highPrioritySubjects.length > 0) {
-            console.log(`Distributing ${remainingToDistribute} extra periods to high priority subjects`);
-            for (let i = 0; i < remainingToDistribute; i++) {
-                const targetSubject = highPrioritySubjects[i % highPrioritySubjects.length];
+        if (actualRemainingToDistribute > 0) {
+            console.log(`FORCE distributing ${actualRemainingToDistribute} periods to prevent OFF periods`);
+            let distributedExtra = 0;
+            
+            // First try high priority non-lab subjects
+            for (let i = 0; i < actualRemainingToDistribute && distributedExtra < actualRemainingToDistribute; i++) {
+                const targetSubject = highPrioritySubjects.length > 0 ? 
+                    highPrioritySubjects[i % highPrioritySubjects.length] : 
+                    subjects[i % subjects.length];
+                    
                 const plan = window.MASTER_ALLOCATION_PLAN[targetSubject.name];
                 
-                if (!plan.isLab) {
-                    // Add extra theory periods
+                if (!plan.isLab || plan.labType !== 'double') {
+                    // Add extra periods to theory or single lab subjects
                     plan.totalPeriods++;
                     plan.singlePeriods++;
-                    console.log(`Added extra period to ${targetSubject.name} (total: ${plan.totalPeriods})`);
+                    distributedExtra++;
+                    console.log(`FORCE added extra period to ${targetSubject.name} (total: ${plan.totalPeriods})`);
                 }
+            }
+            
+            // If still have remaining, distribute to ANY subject
+            for (let i = 0; distributedExtra < actualRemainingToDistribute && i < subjects.length * 3; i++) {
+                const targetSubject = subjects[i % subjects.length];
+                const plan = window.MASTER_ALLOCATION_PLAN[targetSubject.name];
+                
+                plan.totalPeriods++;
+                if (plan.isLab && plan.labType === 'double') {
+                    // Convert one double lab to two single periods if needed
+                    plan.singlePeriods += 2;
+                } else {
+                    plan.singlePeriods++;
+                }
+                distributedExtra++;
+                console.log(`EMERGENCY added period to ${targetSubject.name} (total: ${plan.totalPeriods})`);
             }
         }
     }
@@ -1305,33 +1336,84 @@ function generateConflictFreeTimetable(data) {
         }
     }
     
-    // STEP 6: Fill remaining slots properly
+    // STEP 6: Fill remaining slots with priority subjects (NO free lectures if freeLectures = 0)
+    console.log(`\n=== FILLING REMAINING SLOTS ===`);
+    
+    // Count empty slots
     let emptySlots = 0;
+    const emptyPositions = [];
+    
     for (let period = 0; period < maxHoursPerDay; period++) {
         for (let day = 0; day < workingDays; day++) {
             if (!grid[period][day].subject) {
                 emptySlots++;
-                if (freeLectures > 0) {
-                    grid[period][day] = {
-                        subject: 'Free',
-                        teacher: '',
-                        subjectCode: '',
-                        isBreak: false
-                    };
-                } else {
-                    // Should be minimal empty slots if allocation worked properly
-                    grid[period][day] = {
-                        subject: 'Free',
-                        teacher: '',
-                        subjectCode: '',
-                        isBreak: false
-                    };
-                }
+                emptyPositions.push({period, day});
             }
         }
     }
     
-    console.log(`Empty slots filled: ${emptySlots} (expected free lectures: ${freeLectures})`);
+    console.log(`Found ${emptySlots} empty slots, freeLectures setting: ${freeLectures}`);
+    
+    if (freeLectures === 0 && emptySlots > 0) {
+        // Fill empty slots with high priority subjects to avoid OFF periods
+        console.log(`Filling ${emptySlots} empty slots with high priority subjects...`);
+        
+        const highPrioritySubjects = subjects.filter(s => s.priority === 'High' && !s.isLab);
+        if (highPrioritySubjects.length === 0) {
+            // Fallback to any non-lab subjects
+            const fallbackSubjects = subjects.filter(s => !s.isLab);
+            highPrioritySubjects.push(...fallbackSubjects);
+        }
+        
+        let subjectIndex = 0;
+        for (const pos of emptyPositions) {
+            if (highPrioritySubjects.length > 0) {
+                const subject = highPrioritySubjects[subjectIndex % highPrioritySubjects.length];
+                const teacher = subject.teachers[0];
+                
+                // Check teacher availability
+                const teacherKey = `${teacher}_${pos.day}_${pos.period}`;
+                
+                if (!window.GLOBAL_TEACHER_SCHEDULE[teacherKey]) {
+                    grid[pos.period][pos.day] = {
+                        subject: subject.name,
+                        subjectCode: subject.code,
+                        teacher: teacher,
+                        isBreak: false,
+                        isLab: false,
+                        priority: 'Extra'
+                    };
+                    
+                    // Mark teacher as busy
+                    window.GLOBAL_TEACHER_SCHEDULE[teacherKey] = true;
+                    console.log(`✓ Filled empty slot Day${pos.day+1} P${pos.period+1} with ${subject.name} (${teacher})`);
+                } else {
+                    // Teacher conflict, try next subject or leave as Free
+                    grid[pos.period][pos.day] = {
+                        subject: 'Study',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                    console.log(`⚠️ Teacher conflict at Day${pos.day+1} P${pos.period+1}, marked as Study period`);
+                }
+                subjectIndex++;
+            }
+        }
+    } else if (freeLectures > 0) {
+        // Fill with Free periods as requested
+        for (const pos of emptyPositions) {
+            grid[pos.period][pos.day] = {
+                subject: 'Free',
+                teacher: '',
+                subjectCode: '',
+                isBreak: false
+            };
+        }
+        console.log(`Filled ${emptySlots} slots with Free periods as requested`);
+    }
+    
+    console.log(`Slot filling complete`);
     
     // STEP 7: Final verification
     console.log(`\n=== FINAL VERIFICATION Section ${data.sectionNumber} ===`);
