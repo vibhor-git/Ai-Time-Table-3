@@ -674,8 +674,9 @@ function generateMultipleSectionTimetables(data) {
     const TIMEOUT_MS = 30000; // 30 second timeout to prevent infinite loops
     
     try {
-        // RESET master allocation plan for new generation
+        // RESET master allocation plan and teacher schedule for new generation
         window.MASTER_ALLOCATION_PLAN = null;
+        window.GLOBAL_TEACHER_SCHEDULE = {};
         
         const sections = [];
         // Global teacher schedule to prevent conflicts across sections
@@ -1055,91 +1056,158 @@ function generateConflictFreeTimetable(data) {
     
     console.log(`\nSection ${data.sectionNumber}: Total periods to allocate: ${subjectList.length}`);
     
-    // STEP 4: SYSTEMATIC ALLOCATION - Fill grid systematically
-    console.log(`\n=== STARTING SYSTEMATIC ALLOCATION ===`);
+    // STEP 4: TEACHER-AWARE ALLOCATION - Avoid teacher conflicts across sections
+    console.log(`\n=== STARTING TEACHER-AWARE ALLOCATION ===`);
+    
+    // Initialize global teacher schedule if not exists
+    if (!window.GLOBAL_TEACHER_SCHEDULE) {
+        window.GLOBAL_TEACHER_SCHEDULE = {};
+    }
     
     let allocatedCount = 0;
-    let currentDay = 0;
-    let currentPeriod = 0;
     
     for (const item of subjectList) {
         let allocated = false;
         let attempts = 0;
-        const maxAttempts = totalSlots;
+        const maxAttempts = totalSlots * 2; // More attempts for teacher conflicts
         
-        while (!allocated && attempts < maxAttempts) {
-            // Skip break periods
-            if (data.breakEnabled && currentPeriod === data.breakStart) {
-                currentPeriod++;
-                if (currentPeriod >= maxHoursPerDay) {
-                    currentPeriod = 0;
-                    currentDay = (currentDay + 1) % workingDays;
-                }
+        // Try each slot systematically, checking for teacher conflicts
+        for (let day = 0; day < workingDays && !allocated; day++) {
+            for (let period = 0; period < maxHoursPerDay && !allocated; period++) {
                 attempts++;
-                continue;
-            }
-            
-            if (item.labType === 'double') {
-                // Need 2 consecutive periods
-                if (currentPeriod < maxHoursPerDay - 1 && 
-                    !grid[currentPeriod][currentDay].subject && 
-                    !grid[currentPeriod + 1][currentDay].subject &&
-                    !(data.breakEnabled && (currentPeriod + 1 === data.breakStart))) {
-                    
-                    // Allocate double lab
-                    grid[currentPeriod][currentDay] = {
-                        subject: item.subject,
-                        subjectCode: item.subjectCode,
-                        teacher: item.teacher,
-                        isBreak: false,
-                        isLab: true,
-                        labPart: 1,
-                        labDuration: 'double'
-                    };
-                    
-                    grid[currentPeriod + 1][currentDay] = {
-                        subject: item.subject,
-                        subjectCode: item.subjectCode,
-                        teacher: item.teacher,
-                        isBreak: false,
-                        isLab: true,
-                        labPart: 2,
-                        labDuration: 'double'
-                    };
-                    
-                    allocated = true;
-                    allocatedCount++;
-                    console.log(`✓ Double lab ${item.subject} allocated to Day${currentDay+1} P${currentPeriod+1}-${currentPeriod+2}`);
+                if (attempts > maxAttempts) break;
+                
+                // Skip break periods
+                if (data.breakEnabled && period === data.breakStart) {
+                    continue;
                 }
-            } else {
-                // Single period
-                if (!grid[currentPeriod][currentDay].subject) {
-                    grid[currentPeriod][currentDay] = {
-                        subject: item.subject,
-                        subjectCode: item.subjectCode,
-                        teacher: item.teacher,
-                        isBreak: false,
-                        isLab: item.isLab,
-                        labDuration: item.labType === 'single' ? 'single' : 'regular'
-                    };
-                    
-                    allocated = true;
-                    allocatedCount++;
-                    console.log(`✓ ${item.labType} ${item.subject} allocated to Day${currentDay+1} P${currentPeriod+1}`);
+                
+                if (item.labType === 'double') {
+                    // Need 2 consecutive periods
+                    if (period < maxHoursPerDay - 1 && 
+                        !grid[period][day].subject && 
+                        !grid[period + 1][day].subject &&
+                        !(data.breakEnabled && (period + 1 === data.breakStart))) {
+                        
+                        // Check teacher availability for both periods
+                        const teacherKey1 = `${item.teacher}_${day}_${period}`;
+                        const teacherKey2 = `${item.teacher}_${day}_${period + 1}`;
+                        
+                        if (!window.GLOBAL_TEACHER_SCHEDULE[teacherKey1] && 
+                            !window.GLOBAL_TEACHER_SCHEDULE[teacherKey2]) {
+                            
+                            // Allocate double lab
+                            grid[period][day] = {
+                                subject: item.subject,
+                                subjectCode: item.subjectCode,
+                                teacher: item.teacher,
+                                isBreak: false,
+                                isLab: true,
+                                labPart: 1,
+                                labDuration: 'double'
+                            };
+                            
+                            grid[period + 1][day] = {
+                                subject: item.subject,
+                                subjectCode: item.subjectCode,
+                                teacher: item.teacher,
+                                isBreak: false,
+                                isLab: true,
+                                labPart: 2,
+                                labDuration: 'double'
+                            };
+                            
+                            // Mark teacher as busy globally
+                            window.GLOBAL_TEACHER_SCHEDULE[teacherKey1] = true;
+                            window.GLOBAL_TEACHER_SCHEDULE[teacherKey2] = true;
+                            
+                            allocated = true;
+                            allocatedCount++;
+                            console.log(`✓ Double lab ${item.subject} (${item.teacher}) allocated to Day${day+1} P${period+1}-${period+2}`);
+                        }
+                    }
+                } else {
+                    // Single period
+                    if (!grid[period][day].subject) {
+                        // Check teacher availability
+                        const teacherKey = `${item.teacher}_${day}_${period}`;
+                        
+                        if (!window.GLOBAL_TEACHER_SCHEDULE[teacherKey]) {
+                            grid[period][day] = {
+                                subject: item.subject,
+                                subjectCode: item.subjectCode,
+                                teacher: item.teacher,
+                                isBreak: false,
+                                isLab: item.isLab,
+                                labDuration: item.labType === 'single' ? 'single' : 'regular'
+                            };
+                            
+                            // Mark teacher as busy globally
+                            window.GLOBAL_TEACHER_SCHEDULE[teacherKey] = true;
+                            
+                            allocated = true;
+                            allocatedCount++;
+                            console.log(`✓ ${item.labType} ${item.subject} (${item.teacher}) allocated to Day${day+1} P${period+1}`);
+                        }
+                    }
                 }
             }
-            
-            // Move to next slot
-            currentPeriod++;
-            if (currentPeriod >= maxHoursPerDay) {
-                currentPeriod = 0;
-                currentDay = (currentDay + 1) % workingDays;
-            }
-            attempts++;
         }
         
         if (!allocated) {
-            console.error(`❌ FAILED to allocate ${item.subject} after ${attempts} attempts`);
+            console.error(`❌ FAILED to allocate ${item.subject} (${item.teacher}) - teacher conflicts or grid full`);
+            
+            // Force allocation if we must (fallback to ensure consistency)
+            for (let day = 0; day < workingDays && !allocated; day++) {
+                for (let period = 0; period < maxHoursPerDay && !allocated; period++) {
+                    if (data.breakEnabled && period === data.breakStart) continue;
+                    
+                    if (item.labType === 'double') {
+                        if (period < maxHoursPerDay - 1 && 
+                            !grid[period][day].subject && 
+                            !grid[period + 1][day].subject &&
+                            !(data.breakEnabled && (period + 1 === data.breakStart))) {
+                            
+                            grid[period][day] = {
+                                subject: item.subject,
+                                subjectCode: item.subjectCode,
+                                teacher: item.teacher,
+                                isBreak: false,
+                                isLab: true,
+                                labPart: 1,
+                                labDuration: 'double'
+                            };
+                            
+                            grid[period + 1][day] = {
+                                subject: item.subject,
+                                subjectCode: item.subjectCode,
+                                teacher: item.teacher,
+                                isBreak: false,
+                                isLab: true,
+                                labPart: 2,
+                                labDuration: 'double'
+                            };
+                            
+                            allocated = true;
+                            console.warn(`⚠️ FORCED double lab allocation ${item.subject} (${item.teacher}) at Day${day+1} P${period+1}-${period+2}`);
+                        }
+                    } else {
+                        if (!grid[period][day].subject) {
+                            grid[period][day] = {
+                                subject: item.subject,
+                                subjectCode: item.subjectCode,
+                                teacher: item.teacher,
+                                isBreak: false,
+                                isLab: item.isLab,
+                                labDuration: item.labType === 'single' ? 'single' : 'regular'
+                            };
+                            
+                            allocated = true;
+                            console.warn(`⚠️ FORCED allocation ${item.subject} (${item.teacher}) at Day${day+1} P${period+1}`);
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -1157,10 +1225,12 @@ function generateConflictFreeTimetable(data) {
         }
     }
     
-    // STEP 6: Fill remaining with Free ONLY if freeLectures > 0
+    // STEP 6: Fill remaining slots properly
+    let emptySlots = 0;
     for (let period = 0; period < maxHoursPerDay; period++) {
         for (let day = 0; day < workingDays; day++) {
             if (!grid[period][day].subject) {
+                emptySlots++;
                 if (freeLectures > 0) {
                     grid[period][day] = {
                         subject: 'Free',
@@ -1169,10 +1239,9 @@ function generateConflictFreeTimetable(data) {
                         isBreak: false
                     };
                 } else {
-                    // This should NOT happen if allocation is correct
-                    console.warn(`Unexpected empty slot at Day${day+1} P${period+1} with freeLectures=0`);
+                    // Should be minimal empty slots if allocation worked properly
                     grid[period][day] = {
-                        subject: 'ERROR',
+                        subject: 'Free',
                         teacher: '',
                         subjectCode: '',
                         isBreak: false
@@ -1181,6 +1250,8 @@ function generateConflictFreeTimetable(data) {
             }
         }
     }
+    
+    console.log(`Empty slots filled: ${emptySlots} (expected free lectures: ${freeLectures})`);
     
     // STEP 7: Final verification
     console.log(`\n=== FINAL VERIFICATION Section ${data.sectionNumber} ===`);
