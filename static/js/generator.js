@@ -992,6 +992,7 @@ function generateConflictFreeTimetable(data) {
     const availableForSubjects = totalSlots - totalBreakPeriods - freeLectures;
     
     console.log(`\n=== SECTION ${data.sectionNumber} ALLOCATION CALCULATION ===`);
+    console.log(`Working days: ${workingDays}, Max hours per day: ${maxHoursPerDay}`);
     console.log(`Total slots: ${totalSlots}`);
     console.log(`Break periods: ${totalBreakPeriods}`);
     console.log(`Free lectures: ${freeLectures}`);
@@ -1887,37 +1888,50 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
     // Fill remaining empty slots based on freeLectures setting
     const freeLecturesAllowed = parseInt(data.freeLectures) || 0;
     let freeSlotsFilled = 0;
+    let emptySlots = [];
     
+    // Count and log empty slots
     for (let day = 0; day < workingDays; day++) {
         for (let period = 0; period < maxHoursPerDay; period++) {
             if (!grid[period][day].subject) {
-                if (freeSlotsFilled < freeLecturesAllowed) {
-                    // Fill with Free period
-                    grid[period][day] = {
-                        subject: 'Free',
-                        teacher: '',
-                        subjectCode: '',
-                        isBreak: false
-                    };
-                    freeSlotsFilled++;
-                } else {
-                    // Fill with high priority subjects
-                    const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
-                    const subjectsToUse = highPrioritySubjects.length > 0 ? highPrioritySubjects : data.subjects;
-                    
-                    const randomSubject = subjectsToUse[Math.floor(Math.random() * subjectsToUse.length)];
-                    const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
-                    
-                    grid[period][day] = {
-                        subject: randomSubject.name,
-                        teacher: randomTeacher,
-                        subjectCode: randomSubject.code,
-                        isBreak: false
-                    };
-                }
+                emptySlots.push({day, period});
             }
         }
     }
+    
+    console.log(`Found ${emptySlots.length} empty slots to fill. Free lectures allowed: ${freeLecturesAllowed}`);
+    
+    // Fill empty slots
+    for (const {day, period} of emptySlots) {
+        if (freeSlotsFilled < freeLecturesAllowed) {
+            // Fill with Free period
+            grid[period][day] = {
+                subject: 'Free',
+                teacher: '',
+                subjectCode: '',
+                isBreak: false
+            };
+            freeSlotsFilled++;
+            console.log(`Filled slot [${period}][${day}] with Free period`);
+        } else {
+            // Fill with high priority subjects
+            const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
+            const subjectsToUse = highPrioritySubjects.length > 0 ? highPrioritySubjects : data.subjects;
+            
+            const randomSubject = subjectsToUse[Math.floor(Math.random() * subjectsToUse.length)];
+            const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+            
+            grid[period][day] = {
+                subject: randomSubject.name,
+                teacher: randomTeacher,
+                subjectCode: randomSubject.code,
+                isBreak: false
+            };
+            console.log(`Filled slot [${period}][${day}] with ${randomSubject.name}`);
+        }
+    }
+    
+    console.log(`Final grid check - all slots filled: ${emptySlots.length} slots processed`);
     
     return true;
 }
