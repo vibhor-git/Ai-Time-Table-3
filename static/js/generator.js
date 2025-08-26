@@ -922,7 +922,7 @@ function generateSimpleTimetable(data) {
     for (let period = 0; period < maxHoursPerDay; period++) {
         for (let day = 0; day < workingDays; day++) {
             if (!grid[period][day].subject) {
-                emptySlots.push({period, day});
+                remainingEmptySlots.push({period, day});
             }
         }
     }
@@ -1888,7 +1888,7 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
     // Fill remaining empty slots based on freeLectures setting
     const freeLecturesAllowed = parseInt(data.freeLectures) || 0;
     let freeSlotsFilled = 0;
-    let emptySlots = [];
+    let remainingEmptySlots = [];
     
     // Count and log empty slots
     for (let day = 0; day < workingDays; day++) {
@@ -1899,10 +1899,10 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
         }
     }
     
-    console.log(`Found ${emptySlots.length} empty slots to fill. Free lectures allowed: ${freeLecturesAllowed}`);
+    console.log(`Found ${remainingEmptySlots.length} empty slots to fill. Free lectures allowed: ${freeLecturesAllowed}`);
     
     // Fill empty slots
-    for (const {day, period} of emptySlots) {
+    for (const {day, period} of remainingEmptySlots) {
         if (freeSlotsFilled < freeLecturesAllowed) {
             // Fill with Free period
             grid[period][day] = {
@@ -1931,7 +1931,7 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
         }
     }
     
-    console.log(`Final grid check - all slots filled: ${emptySlots.length} slots processed`);
+    console.log(`Final grid check - all slots filled: ${remainingEmptySlots.length} slots processed`);
     
     return true;
 }
