@@ -787,26 +787,6 @@ function generateConflictFreeTimetable(data) {
         console.log(`FREE LECTURES = ${freeLectures}: Will have ${freeLectures} completely free days`);
         return generateScheduleWithFreeDays(grid, data, subjects, workingDays, maxHoursPerDay, totalBreakPeriods, freeLectures);
     }
-        const plan = window.MASTER_ALLOCATION_PLAN[subject.name];
-        const teacher = subject.teachers[0];
-        
-    const highPrioritySubjects = subjects.filter(s => s.priority === 'High');
-    
-    console.log(`Subjects breakdown: Labs=${labSubjects.length}, Theory=${theorySubjects.length}, High Priority=${highPrioritySubjects.length}`);
-    
-    // Create allocation plan with proper lab handling
-    const allocationPlan = createAdvancedAllocationPlan(subjects, totalSlots, data);
-    
-    // Add breaks to grid first
-    addBreaksToGrid(grid, data, workingDays, maxHoursPerDay);
-    
-    // Distribute subjects with teacher conflict prevention and proper lab spacing
-    distributeSubjectsAdvanced(grid, allocationPlan, data, workingDays, maxHoursPerDay);
-    
-    return {
-        ...data,
-        timetableGrid: grid
-    };
 }
 
 // FUNCTION: Generate schedule with specific number of free days
@@ -857,6 +837,29 @@ function generateScheduleWithFreeDays(grid, data, subjects, workingDays, maxHour
     };
 }
 
+// FUNCTION: Generate schedule filling all available periods
+function generateFullSchedule(grid, data, subjects, workingDays, maxHoursPerDay, totalBreakPeriods) {
+    console.log('\n=== GENERATING FULL SCHEDULE (ALL PERIODS FILLED) ===');
+    
+    // Calculate total available slots
+    const totalSlots = (workingDays * maxHoursPerDay) - totalBreakPeriods;
+    console.log(`Total slots to fill: ${totalSlots}`);
+    
+    // Create allocation plan for all subjects
+    const allocationPlan = createAdvancedAllocationPlan(subjects, totalSlots, data);
+    
+    // Add breaks to grid first
+    addBreaksToGrid(grid, data, workingDays, maxHoursPerDay);
+    
+    // Distribute subjects across all available days
+    const allDays = Array.from({length: workingDays}, (_, i) => i);
+    distributeSubjectsAdvanced(grid, allocationPlan, data, workingDays, maxHoursPerDay, allDays);
+    
+    return {
+        ...data,
+        timetableGrid: grid
+    };
+}
 
 // Add breaks to the grid
 function addBreaksToGrid(grid, data, workingDays, maxHoursPerDay) {
@@ -937,7 +940,7 @@ function createAdvancedAllocationPlan(subjects, totalSlots, data) {
 }
 
 // FUNCTION: Advanced subject distribution with teacher conflict prevention
-function distributeSubjectsAdvanced(grid, allocationPlan, data, workingDays, maxHoursPerDay) {
+function distributeSubjectsAdvanced(grid, allocationPlan, data, workingDays, maxHoursPerDay, availableDays = null) {
     console.log('\n=== DISTRIBUTING SUBJECTS WITH CONFLICT PREVENTION ===');
     
     // Initialize global teacher schedule if not exists (for multi-section)
@@ -956,13 +959,18 @@ function distributeSubjectsAdvanced(grid, allocationPlan, data, workingDays, max
         return priorityOrder[b.priority] - priorityOrder[a.priority];
     });
     
+    // Use available days if provided, otherwise use all days
+    const daysToUse = availableDays || Array.from({length: workingDays}, (_, i) => i);
+    console.log(`Distributing on days: ${daysToUse.map(d => d + 1).join(', ')}`);
+    
     for (const allocation of allocationPlan) {
         let placed = false;
         let attempts = 0;
         const maxAttempts = workingDays * maxHoursPerDay * 2;
         
         while (!placed && attempts < maxAttempts) {
-            for (let day = 0; day < workingDays && !placed; day++) {
+            for (const day of daysToUse) {
+                if (placed) break;
                 for (let period = 0; period < maxHoursPerDay && !placed; period++) {
                     if (attempts > maxAttempts) break;
                     
