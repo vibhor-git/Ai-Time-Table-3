@@ -973,15 +973,30 @@ function generateConflictFreeTimetable(data) {
         console.log(`Base periods per subject: ${periodsPerSubject}`);
         console.log(`Extra periods to distribute: ${remainingPeriods}`);
         
+        // Separate subjects by priority and type
+        const highPrioritySubjects = subjects.filter(s => s.priority === 'High');
+        const mediumPrioritySubjects = subjects.filter(s => s.priority === 'Medium');
+        const lowPrioritySubjects = subjects.filter(s => s.priority === 'Low');
+        
+        console.log(`Priority breakdown: High=${highPrioritySubjects.length}, Medium=${mediumPrioritySubjects.length}, Low=${lowPrioritySubjects.length}`);
+        
+        // Calculate minimum periods needed
+        let periodsUsed = 0;
+        
         subjects.forEach((subject, index) => {
-            // Give extra periods to first subjects (or high priority)
-            const extraPeriod = index < remainingPeriods ? 1 : 0;
-            const totalPeriods = periodsPerSubject + extraPeriod;
+            // Base allocation
+            let subjectPeriods = periodsPerSubject;
+            
+            // Give extra periods to high priority subjects first
+            if (subject.priority === 'High' && remainingPeriods > 0) {
+                subjectPeriods++;
+                remainingPeriods--;
+            }
             
             // Handle lab configuration
             if (subject.isLab && subject.labDuration === 'double') {
                 // Double labs - need pairs of periods
-                const labSessions = Math.floor(totalPeriods / 2);
+                const labSessions = Math.floor(subjectPeriods / 2);
                 const actualPeriods = labSessions * 2;
                 
                 window.MASTER_ALLOCATION_PLAN[subject.name] = {
@@ -989,35 +1004,63 @@ function generateConflictFreeTimetable(data) {
                     labSessions: labSessions,
                     isLab: true,
                     labType: 'double',
-                    singlePeriods: 0
+                    singlePeriods: 0,
+                    priority: subject.priority
                 };
-                console.log(`${subject.name}: ${labSessions} double labs (${actualPeriods} periods)`);
+                periodsUsed += actualPeriods;
+                console.log(`${subject.name} (${subject.priority}): ${labSessions} double labs (${actualPeriods} periods)`);
             } else if (subject.isLab) {
                 // Single period labs
                 window.MASTER_ALLOCATION_PLAN[subject.name] = {
-                    totalPeriods: totalPeriods,
-                    labSessions: totalPeriods,
+                    totalPeriods: subjectPeriods,
+                    labSessions: subjectPeriods,
                     isLab: true,
                     labType: 'single',
-                    singlePeriods: totalPeriods
+                    singlePeriods: subjectPeriods,
+                    priority: subject.priority
                 };
-                console.log(`${subject.name}: ${totalPeriods} single labs`);
+                periodsUsed += subjectPeriods;
+                console.log(`${subject.name} (${subject.priority}): ${subjectPeriods} single labs`);
             } else {
                 // Theory subjects
                 window.MASTER_ALLOCATION_PLAN[subject.name] = {
-                    totalPeriods: totalPeriods,
+                    totalPeriods: subjectPeriods,
                     labSessions: 0,
                     isLab: false,
                     labType: 'theory',
-                    singlePeriods: totalPeriods
+                    singlePeriods: subjectPeriods,
+                    priority: subject.priority
                 };
-                console.log(`${subject.name}: ${totalPeriods} theory periods`);
+                periodsUsed += subjectPeriods;
+                console.log(`${subject.name} (${subject.priority}): ${subjectPeriods} theory periods`);
             }
         });
+        
+        // Fill remaining periods with high priority subjects
+        const remainingToDistribute = availableForSubjects - periodsUsed;
+        console.log(`Periods used: ${periodsUsed}, Remaining to distribute: ${remainingToDistribute}`);
+        
+        if (remainingToDistribute > 0 && highPrioritySubjects.length > 0) {
+            console.log(`Distributing ${remainingToDistribute} extra periods to high priority subjects`);
+            for (let i = 0; i < remainingToDistribute; i++) {
+                const targetSubject = highPrioritySubjects[i % highPrioritySubjects.length];
+                const plan = window.MASTER_ALLOCATION_PLAN[targetSubject.name];
+                
+                if (!plan.isLab) {
+                    // Add extra theory periods
+                    plan.totalPeriods++;
+                    plan.singlePeriods++;
+                    console.log(`Added extra period to ${targetSubject.name} (total: ${plan.totalPeriods})`);
+                }
+            }
+        }
     }
     
-    // STEP 3: Generate subject allocation list for this section
+    // STEP 3: Generate optimized subject allocation list for this section
     const subjectList = [];
+    const theorySubjects = [];
+    const labSubjects = [];
+    
     subjects.forEach(subject => {
         const plan = window.MASTER_ALLOCATION_PLAN[subject.name];
         const teacher = subject.teachers[0];
@@ -1028,36 +1071,49 @@ function generateConflictFreeTimetable(data) {
         if (plan.labType === 'double') {
             // Add double lab sessions
             for (let i = 0; i < plan.labSessions; i++) {
-                subjectList.push({
+                const labItem = {
                     subject: subject.name,
                     subjectCode: subject.code,
                     teacher: teacher,
                     isLab: true,
                     labType: 'double',
+                    priority: plan.priority,
                     sessionId: `${subject.name}_double_${i}`
-                });
+                };
+                subjectList.push(labItem);
+                labSubjects.push(labItem);
                 console.log(`  Added double lab ${i + 1}`);
             }
         } else {
             // Add single period sessions (labs or theory)
             for (let i = 0; i < plan.singlePeriods; i++) {
-                subjectList.push({
+                const item = {
                     subject: subject.name,
                     subjectCode: subject.code,
                     teacher: teacher,
                     isLab: plan.isLab,
                     labType: plan.labType,
+                    priority: plan.priority,
                     sessionId: `${subject.name}_single_${i}`
-                });
+                };
+                subjectList.push(item);
+                
+                if (plan.isLab) {
+                    labSubjects.push(item);
+                } else {
+                    theorySubjects.push(item);
+                }
                 console.log(`  Added ${plan.labType} period ${i + 1}`);
             }
         }
     });
     
     console.log(`\nSection ${data.sectionNumber}: Total periods to allocate: ${subjectList.length}`);
+    console.log(`  Theory periods: ${theorySubjects.length}`);
+    console.log(`  Lab periods: ${labSubjects.length}`);
     
-    // STEP 4: TEACHER-AWARE ALLOCATION - Avoid teacher conflicts across sections
-    console.log(`\n=== STARTING TEACHER-AWARE ALLOCATION ===`);
+    // STEP 4: OPTIMIZED DAY-BY-DAY ALLOCATION - Avoid consecutive same theory subjects
+    console.log(`\n=== STARTING OPTIMIZED DAY-BY-DAY ALLOCATION ===`);
     
     // Initialize global teacher schedule if not exists
     if (!window.GLOBAL_TEACHER_SCHEDULE) {
@@ -1066,12 +1122,21 @@ function generateConflictFreeTimetable(data) {
     
     let allocatedCount = 0;
     
-    for (const item of subjectList) {
+    // Sort subjects to prioritize labs first, then distribute theory subjects
+    const sortedSubjects = [...subjectList].sort((a, b) => {
+        if (a.isLab && !b.isLab) return -1; // Labs first
+        if (!a.isLab && b.isLab) return 1;
+        if (a.priority === 'High' && b.priority !== 'High') return -1; // High priority first
+        if (a.priority !== 'High' && b.priority === 'High') return 1;
+        return 0;
+    });
+    
+    for (const item of sortedSubjects) {
         let allocated = false;
         let attempts = 0;
-        const maxAttempts = totalSlots * 2; // More attempts for teacher conflicts
+        const maxAttempts = totalSlots * 2;
         
-        // Try each slot systematically, checking for teacher conflicts
+        // Try each slot with smart placement logic
         for (let day = 0; day < workingDays && !allocated; day++) {
             for (let period = 0; period < maxHoursPerDay && !allocated; period++) {
                 attempts++;
@@ -1083,7 +1148,7 @@ function generateConflictFreeTimetable(data) {
                 }
                 
                 if (item.labType === 'double') {
-                    // Need 2 consecutive periods
+                    // Need 2 consecutive periods for double labs
                     if (period < maxHoursPerDay - 1 && 
                         !grid[period][day].subject && 
                         !grid[period + 1][day].subject &&
@@ -1127,27 +1192,42 @@ function generateConflictFreeTimetable(data) {
                         }
                     }
                 } else {
-                    // Single period
+                    // Single period - check for consecutive theory subjects
                     if (!grid[period][day].subject) {
                         // Check teacher availability
                         const teacherKey = `${item.teacher}_${day}_${period}`;
                         
                         if (!window.GLOBAL_TEACHER_SCHEDULE[teacherKey]) {
-                            grid[period][day] = {
-                                subject: item.subject,
-                                subjectCode: item.subjectCode,
-                                teacher: item.teacher,
-                                isBreak: false,
-                                isLab: item.isLab,
-                                labDuration: item.labType === 'single' ? 'single' : 'regular'
-                            };
+                            // For theory subjects, avoid consecutive same subjects
+                            let canPlace = true;
+                            if (!item.isLab) {
+                                // Check previous period on same day
+                                if (period > 0 && grid[period - 1][day].subject === item.subject) {
+                                    canPlace = false;
+                                }
+                                // Check next period on same day
+                                if (period < maxHoursPerDay - 1 && grid[period + 1][day].subject === item.subject) {
+                                    canPlace = false;
+                                }
+                            }
                             
-                            // Mark teacher as busy globally
-                            window.GLOBAL_TEACHER_SCHEDULE[teacherKey] = true;
-                            
-                            allocated = true;
-                            allocatedCount++;
-                            console.log(`✓ ${item.labType} ${item.subject} (${item.teacher}) allocated to Day${day+1} P${period+1}`);
+                            if (canPlace) {
+                                grid[period][day] = {
+                                    subject: item.subject,
+                                    subjectCode: item.subjectCode,
+                                    teacher: item.teacher,
+                                    isBreak: false,
+                                    isLab: item.isLab,
+                                    labDuration: item.labType === 'single' ? 'single' : 'regular'
+                                };
+                                
+                                // Mark teacher as busy globally
+                                window.GLOBAL_TEACHER_SCHEDULE[teacherKey] = true;
+                                
+                                allocated = true;
+                                allocatedCount++;
+                                console.log(`✓ ${item.labType} ${item.subject} (${item.teacher}) allocated to Day${day+1} P${period+1}`);
+                            }
                         }
                     }
                 }
