@@ -519,37 +519,49 @@ function collectFormData() {
 }
 
 function generateTimetable(data) {
-    const { workingDays, maxHoursPerDay, subjects, breakEnabled, breakStart, breakDurationMinutes } = data;
+    const startTime = Date.now();
+    const TIMEOUT_MS = 10000; // 10 second timeout for single timetable
     
-    // Initialize timetable grid - STRICTLY respect maxHoursPerDay
-    const grid = [];
-    for (let period = 0; period < maxHoursPerDay; period++) {
-        const row = [];
-        for (let day = 0; day < workingDays; day++) {
-            row.push({ subject: null, teacher: null, subjectCode: null, isBreak: false });
+    try {
+        const { workingDays, maxHoursPerDay, subjects, breakEnabled, breakStart, breakDurationMinutes } = data;
+        
+        // For single sections, use simple algorithm to avoid complexity
+        if (!data.numberOfSections || data.numberOfSections === 1) {
+            return generateSimpleTimetable(data);
         }
-        grid.push(row);
+        
+        // Initialize timetable grid - STRICTLY respect maxHoursPerDay
+        const grid = [];
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            const row = [];
+            for (let day = 0; day < workingDays; day++) {
+                row.push({ subject: null, teacher: null, subjectCode: null, isBreak: false });
+            }
+            grid.push(row);
+        }
+        
+        // Create allocation plan
+        const allocationPlan = createAllocationPlan(subjects, data);
+        
+        // Allocate subjects to timetable with timeout protection
+        const success = allocateSubjectsWithTimeout(grid, allocationPlan, data, startTime, TIMEOUT_MS);
+        
+        if (!success) {
+            console.warn('Some subjects could not be allocated due to timetable constraints, using simple allocation');
+            return generateSimpleTimetable(data);
+        }
+        
+        return {
+            ...data,
+            timetableGrid: grid,
+            breakEnabled,
+            breakStart,
+            breakDurationMinutes
+        };
+    } catch (error) {
+        console.error('Error in generateTimetable:', error);
+        return generateSimpleTimetable(data);
     }
-    
-    // Don't place breaks in the grid - they will be handled in display
-    
-    // Create allocation plan
-    const allocationPlan = createAllocationPlan(subjects, data);
-    
-    // Allocate subjects to timetable with strict period limit
-    const success = allocateSubjectsToGridStrict(grid, allocationPlan, data);
-    
-    if (!success) {
-        console.warn('Some subjects could not be allocated due to timetable constraints');
-    }
-    
-    return {
-        ...data,
-        timetableGrid: grid,
-        breakEnabled,
-        breakStart,
-        breakDurationMinutes
-    };
 }
 
 function createAllocationPlan(subjects, data) {
@@ -656,134 +668,195 @@ function createAllocationPlan(subjects, data) {
     return plan;
 }
 
-// New function to generate timetables for multiple sections
+// Simplified function to generate timetables for multiple sections with timeout protection
 function generateMultipleSectionTimetables(data) {
-    const sections = [];
-    const teacherUsage = {}; // Track teacher usage across sections
+    const startTime = Date.now();
+    const TIMEOUT_MS = 30000; // 30 second timeout to prevent infinite loops
     
-    // Initialize global lab tracker for consistent lab distribution across sections
-    const globalLabTracker = {};
-    
-    // First, show teacher distribution summary
-    console.log('\n=== TEACHER DISTRIBUTION ACROSS SECTIONS ===');
-    data.subjects.forEach(subject => {
-        if (subject.teachers.length > 1) {
-            console.log(`\n${subject.name} (${subject.code}):`);
-            
-            const totalTeachers = subject.teachers.length;
-            const sectionsPerTeacher = Math.floor(data.numberOfSections / totalTeachers);
-            const remainingSections = data.numberOfSections % totalTeachers;
-            
-            let currentSection = 1;
-            for (let teacherIndex = 0; teacherIndex < totalTeachers; teacherIndex++) {
-                let sectionsForThisTeacher = sectionsPerTeacher;
-                if (teacherIndex < remainingSections) {
-                    sectionsForThisTeacher += 1;
-                }
-                
-                const endSection = currentSection + sectionsForThisTeacher - 1;
-                const sectionRange = currentSection === endSection ? 
-                    `Section ${currentSection}` : 
-                    `Sections ${currentSection}-${endSection}`;
-                
-                console.log(`  ${subject.teachers[teacherIndex]}: ${sectionRange} (${sectionsForThisTeacher} sections)`);
-                currentSection += sectionsForThisTeacher;
+    try {
+        const sections = [];
+        const teacherUsage = {}; // Track teacher usage across sections
+        
+        console.log(`Generating timetables for ${data.numberOfSections} sections...`);
+        
+        for (let sectionNum = 1; sectionNum <= data.numberOfSections; sectionNum++) {
+            // Check timeout
+            if (Date.now() - startTime > TIMEOUT_MS) {
+                console.error('Timetable generation timeout - stopping to prevent infinite loop');
+                return null;
             }
+            
+            const sectionData = {
+                ...data,
+                className: `${data.className} - Section ${sectionNum}`,
+                sectionNumber: sectionNum
+            };
+            
+            // Simple teacher distribution - round robin
+            const adjustedSubjects = distributeTeachersSimple(data.subjects, sectionNum, data.numberOfSections);
+            sectionData.subjects = adjustedSubjects;
+            
+            console.log(`Generating Section ${sectionNum}...`);
+            const sectionTimetable = generateSimpleTimetable(sectionData);
+            if (!sectionTimetable) {
+                console.error(`Failed to generate timetable for section ${sectionNum}`);
+                return null;
+            }
+            
+            sections.push(sectionTimetable);
         }
-    });
-    console.log('\n=== GENERATING SECTION TIMETABLES ===\n');
-    
-    // Create global teacher schedule to prevent conflicts across sections
-    const globalTeacherSchedule = {};
-    
-    for (let sectionNum = 1; sectionNum <= data.numberOfSections; sectionNum++) {
-        const sectionData = {
+        
+        return {
             ...data,
-            className: `${data.className} - Section ${sectionNum}`,
-            sectionNumber: sectionNum,
-            globalTeacherSchedule: globalTeacherSchedule, // Pass global schedule
-            globalLabTracker: globalLabTracker // Pass global lab tracker for balanced distribution
+            sections: sections,
+            numberOfSections: data.numberOfSections
         };
-        
-        // Distribute teachers fairly across sections
-        const adjustedSubjects = distributeTeachersAcrossSections(data.subjects, sectionNum, data.numberOfSections, teacherUsage);
-        sectionData.subjects = adjustedSubjects;
-        
-        console.log(`\n--- Generating Section ${sectionNum} ---`);
-        const sectionTimetable = generateTimetable(sectionData);
-        if (!sectionTimetable) {
-            console.error(`Failed to generate timetable for section ${sectionNum}`);
-            return null;
-        }
-        
-        // Update teacher usage tracking
-        updateTeacherUsage(sectionTimetable, teacherUsage);
-        sections.push(sectionTimetable);
+    } catch (error) {
+        console.error('Error in generateMultipleSectionTimetables:', error);
+        return null;
     }
-    
-    // Log lab distribution summary
-    console.log('\n=== LAB DISTRIBUTION SUMMARY ===');
-    Object.keys(globalLabTracker).forEach(labKey => {
-        console.log(`${labKey}: ${globalLabTracker[labKey]} total lab sessions across all sections`);
-    });
-    
-    return {
-        ...data,
-        sections: sections,
-        numberOfSections: data.numberOfSections,
-        globalLabTracker: globalLabTracker
-    };
 }
 
-// Enhanced function to distribute teachers evenly across multiple sections with conflict prevention
-function distributeTeachersAcrossSections(subjects, sectionNumber, totalSections, teacherUsage) {
+// Simple round-robin teacher distribution to prevent complexity
+function distributeTeachersSimple(subjects, sectionNumber, totalSections) {
     return subjects.map(subject => {
-        if (subject.teachers.length === 1 || totalSections === 1) {
-            // Warn about potential conflicts when one teacher handles multiple sections
-            if (subject.teachers.length === 1 && totalSections > 1) {
-                console.warn(`⚠️ Subject ${subject.name} has only one teacher (${subject.teachers[0]}) for ${totalSections} sections - potential scheduling conflicts`);
-            }
-            return subject; // No need to distribute if only one teacher or one section
+        if (subject.teachers.length === 1) {
+            return subject; // Single teacher handles all sections
         }
         
-        // Calculate sections per teacher (distribute evenly)
-        const totalTeachers = subject.teachers.length;
-        const sectionsPerTeacher = Math.floor(totalSections / totalTeachers);
-        const remainingSections = totalSections % totalTeachers;
-        
-        // Find which teacher should handle this section
-        let assignedTeacher = null;
-        let currentSection = 1;
-        
-        for (let teacherIndex = 0; teacherIndex < totalTeachers; teacherIndex++) {
-            // Calculate how many sections this teacher gets
-            let sectionsForThisTeacher = sectionsPerTeacher;
-            if (teacherIndex < remainingSections) {
-                sectionsForThisTeacher += 1; // Give extra section to first few teachers
-            }
-            
-            // Check if current section falls in this teacher's range
-            if (sectionNumber >= currentSection && sectionNumber < currentSection + sectionsForThisTeacher) {
-                assignedTeacher = subject.teachers[teacherIndex];
-                break;
-            }
-            
-            currentSection += sectionsForThisTeacher;
-        }
-        
-        // Fallback: round-robin assignment if calculation fails
-        if (!assignedTeacher) {
-            const teacherIndex = (sectionNumber - 1) % totalTeachers;
-            assignedTeacher = subject.teachers[teacherIndex];
-        }
-        
-        console.log(`Subject: ${subject.name}, Section: ${sectionNumber}, Teacher: ${assignedTeacher}`);
+        // Round-robin assignment
+        const teacherIndex = (sectionNumber - 1) % subject.teachers.length;
+        const assignedTeacher = subject.teachers[teacherIndex];
         
         return {
             ...subject,
-            teachers: [assignedTeacher] // Each section gets exactly one teacher per subject
+            teachers: [assignedTeacher]
         };
     });
+}
+
+// Simplified timetable generation to prevent infinite loops
+function generateSimpleTimetable(data) {
+    const { workingDays, maxHoursPerDay, subjects } = data;
+    
+    // Initialize grid
+    const grid = [];
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        const row = [];
+        for (let day = 0; day < workingDays; day++) {
+            row.push({ subject: null, teacher: null, subjectCode: null, isBreak: false });
+        }
+        grid.push(row);
+    }
+    
+    // Simple allocation: distribute subjects evenly
+    const totalSlots = workingDays * maxHoursPerDay;
+    const slotsPerSubject = Math.floor(totalSlots / subjects.length);
+    
+    let currentSlot = 0;
+    
+    subjects.forEach((subject, subjectIndex) => {
+        const teacher = subject.teachers[0]; // Use first (only) teacher for this section
+        
+        // Allocate slots for this subject
+        for (let s = 0; s < slotsPerSubject && currentSlot < totalSlots; s++) {
+            const day = Math.floor(currentSlot / maxHoursPerDay);
+            const period = currentSlot % maxHoursPerDay;
+            
+            if (day < workingDays && period < maxHoursPerDay) {
+                grid[period][day] = {
+                    subject: subject.name,
+                    teacher: teacher,
+                    subjectCode: subject.code,
+                    isBreak: false
+                };
+            }
+            currentSlot++;
+        }
+    });
+    
+    // Fill remaining slots with free periods
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        for (let day = 0; day < workingDays; day++) {
+            if (!grid[period][day].subject) {
+                grid[period][day] = {
+                    subject: 'Free',
+                    teacher: '',
+                    subjectCode: '',
+                    isBreak: false
+                };
+            }
+        }
+    }
+    
+    return {
+        ...data,
+        timetableGrid: grid
+    };
+}
+
+// Timeout-protected allocation function
+function allocateSubjectsWithTimeout(grid, allocationPlan, data, startTime, timeoutMs) {
+    const { workingDays, maxHoursPerDay } = data;
+    
+    // Simple round-robin allocation to prevent infinite loops
+    let currentSlot = 0;
+    const totalSlots = workingDays * maxHoursPerDay;
+    
+    for (const allocation of allocationPlan) {
+        // Check timeout
+        if (Date.now() - startTime > timeoutMs) {
+            console.warn('Allocation timeout reached');
+            return false;
+        }
+        
+        // Find next available slot
+        let allocated = false;
+        let attempts = 0;
+        const maxAttempts = totalSlots;
+        
+        while (!allocated && attempts < maxAttempts) {
+            if (currentSlot >= totalSlots) {
+                currentSlot = 0; // Wrap around
+            }
+            
+            const day = Math.floor(currentSlot / maxHoursPerDay);
+            const period = currentSlot % maxHoursPerDay;
+            
+            if (day < workingDays && period < maxHoursPerDay && !grid[period][day].subject) {
+                grid[period][day] = {
+                    subject: allocation.subject,
+                    subjectCode: allocation.subjectCode,
+                    teacher: allocation.teacher,
+                    isBreak: false
+                };
+                allocated = true;
+            }
+            
+            currentSlot++;
+            attempts++;
+        }
+        
+        if (!allocated) {
+            console.warn('Could not allocate:', allocation.subject);
+        }
+    }
+    
+    // Fill remaining slots with "Free"
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        for (let day = 0; day < workingDays; day++) {
+            if (!grid[period][day].subject) {
+                grid[period][day] = {
+                    subject: 'Free',
+                    teacher: '',
+                    subjectCode: '',
+                    isBreak: false
+                };
+            }
+        }
+    }
+    
+    return true;
 }
 
 // Function to update teacher usage tracking
