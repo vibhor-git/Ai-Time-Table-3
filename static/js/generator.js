@@ -913,48 +913,53 @@ function generateSimpleTimetable(data) {
         }
     }
     
-    // Only fill remaining slots with 'Free' periods if freeLectures allows it
+    // Handle remaining empty slots based on freeLectures setting
     const maxFreeLectures = parseInt(data.freeLectures) || 0;
     let freeSlotsFilled = 0;
+    const emptySlots = [];
     
+    // First, collect all empty slots
     for (let period = 0; period < maxHoursPerDay; period++) {
         for (let day = 0; day < workingDays; day++) {
             if (!grid[period][day].subject) {
-                if (freeSlotsFilled < maxFreeLectures) {
-                    grid[period][day] = {
-                        subject: 'Free',
-                        teacher: '',
-                        subjectCode: '',
-                        isBreak: false
-                    };
-                    freeSlotsFilled++;
-                } else {
-                    // When free lectures = 0, fill remaining slots with high priority subjects
-                    const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
-                    if (highPrioritySubjects.length > 0) {
-                        const randomSubject = highPrioritySubjects[Math.floor(Math.random() * highPrioritySubjects.length)];
-                        const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
-                        grid[period][day] = {
-                            subject: randomSubject.name,
-                            teacher: randomTeacher,
-                            subjectCode: randomSubject.code,
-                            isBreak: false
-                        };
-                    } else {
-                        // No high priority subjects available, use any subject
-                        const randomSubject = data.subjects[Math.floor(Math.random() * data.subjects.length)];
-                        const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
-                        grid[period][day] = {
-                            subject: randomSubject.name,
-                            teacher: randomTeacher,
-                            subjectCode: randomSubject.code,
-                            isBreak: false
-                        };
-                    }
-                }
+                emptySlots.push({period, day});
             }
         }
     }
+    
+    console.log(`Found ${emptySlots.length} empty slots, freeLectures setting: ${maxFreeLectures}`);
+    
+    // Fill slots based on freeLectures setting
+    for (let i = 0; i < emptySlots.length; i++) {
+        const {period, day} = emptySlots[i];
+        
+        if (freeSlotsFilled < maxFreeLectures) {
+            // Fill with "Free" period
+            grid[period][day] = {
+                subject: 'Free',
+                teacher: '',
+                subjectCode: '',
+                isBreak: false
+            };
+            freeSlotsFilled++;
+        } else {
+            // Fill with high priority subjects (or any subject if no high priority)
+            const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
+            const subjectsToUse = highPrioritySubjects.length > 0 ? highPrioritySubjects : data.subjects;
+            
+            const randomSubject = subjectsToUse[Math.floor(Math.random() * subjectsToUse.length)];
+            const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+            
+            grid[period][day] = {
+                subject: randomSubject.name,
+                teacher: randomTeacher,
+                subjectCode: randomSubject.code,
+                isBreak: false
+            };
+        }
+    }
+    
+    console.log(`Filled ${freeSlotsFilled} free slots and ${emptySlots.length - freeSlotsFilled} subject slots`);
     
     return {
         ...data,
@@ -1879,21 +1884,37 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
         }
     }
     
-    // Fill remaining available slots with "OFF" - but only up to maxHoursPerDay per day
+    // Fill remaining empty slots based on freeLectures setting
+    const freeLecturesAllowed = parseInt(data.freeLectures) || 0;
+    let freeSlotsFilled = 0;
+    
     for (let day = 0; day < workingDays; day++) {
         for (let period = 0; period < maxHoursPerDay; period++) {
             if (!grid[period][day].subject) {
-                // Only mark as OFF if it's beyond working hours, otherwise leave empty
-                // This prevents unwanted OFF periods when freeLectures is 0
-                const totalSlots = data.workingDays * data.maxHoursPerDay;
-                const freeLectures = parseInt(data.freeLectures) || 0;
-                
-                grid[period][day] = {
-                    subject: 'OFF',
-                    teacher: '',
-                    subjectCode: '',
-                    isBreak: false
-                };
+                if (freeSlotsFilled < freeLecturesAllowed) {
+                    // Fill with Free period
+                    grid[period][day] = {
+                        subject: 'Free',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                    freeSlotsFilled++;
+                } else {
+                    // Fill with high priority subjects
+                    const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
+                    const subjectsToUse = highPrioritySubjects.length > 0 ? highPrioritySubjects : data.subjects;
+                    
+                    const randomSubject = subjectsToUse[Math.floor(Math.random() * subjectsToUse.length)];
+                    const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+                    
+                    grid[period][day] = {
+                        subject: randomSubject.name,
+                        teacher: randomTeacher,
+                        subjectCode: randomSubject.code,
+                        isBreak: false
+                    };
+                }
             }
         }
     }
@@ -2004,7 +2025,10 @@ function generateTimetableHTML(timetable) {
             if (cell.isBreak) {
                 // Skip break cells as they're handled above
                 continue;
-            } else if (cell.subject === 'Free' || !cell.subject) {
+            } else if (cell.subject === 'Free') {
+                cellContent = 'Free';
+                cellClass += ' free-cell';
+            } else if (!cell.subject || cell.subject === '') {
                 cellContent = 'OFF';
                 cellClass += ' off-cell';
             } else if (cell.subject) {
