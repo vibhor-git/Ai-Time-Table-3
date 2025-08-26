@@ -792,10 +792,12 @@ function generateSimpleTimetable(data) {
         grid.push(row);
     }
     
-    // Create allocation plan with lab duration support
+    // Create allocation plan with lab duration support - respect freeLectures setting
     const allocationPlan = [];
     const totalSlots = workingDays * maxHoursPerDay;
-    const slotsPerSubject = Math.floor(totalSlots / subjects.length);
+    const maxFreeLecturesAllowed = parseInt(data.freeLectures) || 0;
+    const availableSlots = totalSlots - maxFreeLecturesAllowed;
+    const slotsPerSubject = Math.floor(availableSlots / subjects.length);
     
     // For single timetables, create consistent allocation plan
     subjects.forEach(subject => {
@@ -911,16 +913,30 @@ function generateSimpleTimetable(data) {
         }
     }
     
-    // Fill remaining slots with free periods
+    // Only fill remaining slots with 'Free' periods if freeLectures allows it
+    const maxFreeLectures = parseInt(data.freeLectures) || 0;
+    let freeSlotsFilled = 0;
+    
     for (let period = 0; period < maxHoursPerDay; period++) {
         for (let day = 0; day < workingDays; day++) {
             if (!grid[period][day].subject) {
-                grid[period][day] = {
-                    subject: 'Free',
-                    teacher: '',
-                    subjectCode: '',
-                    isBreak: false
-                };
+                if (freeSlotsFilled < maxFreeLectures) {
+                    grid[period][day] = {
+                        subject: 'Free',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                    freeSlotsFilled++;
+                } else {
+                    // Don't fill with Free - leave empty for proper rendering
+                    grid[period][day] = {
+                        subject: '',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                }
             }
         }
     }
@@ -1492,16 +1508,22 @@ function allocateSubjectsWithTimeout(grid, allocationPlan, data, startTime, time
         }
     }
     
-    // Fill remaining slots with "Free"
-    for (let period = 0; period < maxHoursPerDay; period++) {
-        for (let day = 0; day < workingDays; day++) {
-            if (!grid[period][day].subject) {
-                grid[period][day] = {
-                    subject: 'Free',
-                    teacher: '',
-                    subjectCode: '',
-                    isBreak: false
-                };
+    // Only fill remaining slots with "Free" if freeLectures parameter allows it
+    const allowedFreeLectures = parseInt(data.freeLectures) || 0;
+    let freeSlotsFilled = 0;
+    
+    if (allowedFreeLectures > 0) {
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            for (let day = 0; day < workingDays; day++) {
+                if (!grid[period][day].subject && freeSlotsFilled < allowedFreeLectures) {
+                    grid[period][day] = {
+                        subject: 'Free',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                    freeSlotsFilled++;
+                }
             }
         }
     }
@@ -1806,6 +1828,11 @@ function allocateSubjectsToGridStrict(grid, allocationPlan, data) {
     for (let day = 0; day < workingDays; day++) {
         for (let period = 0; period < maxHoursPerDay; period++) {
             if (!grid[period][day].subject) {
+                // Only mark as OFF if it's beyond working hours, otherwise leave empty
+                // This prevents unwanted OFF periods when freeLectures is 0
+                const totalSlots = data.workingDays * data.maxHoursPerDay;
+                const freeLectures = parseInt(data.freeLectures) || 0;
+                
                 grid[period][day] = {
                     subject: 'OFF',
                     teacher: '',
