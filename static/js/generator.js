@@ -944,45 +944,65 @@ function generateConflictFreeTimetable(data) {
     // Create allocation plan for this section
     const allocationPlan = [];
     const totalSlots = workingDays * maxHoursPerDay;
-    const slotsPerSubject = Math.floor(totalSlots / subjects.length);
+    
+    // Calculate break periods
+    let totalBreakPeriods = 0;
+    if (data.breakEnabled) {
+        totalBreakPeriods = workingDays; // One break per day
+    }
+    
+    // Get free lecture count from the original data
+    const freeLectures = parseInt(data.freeLectures) || 0;
+    const availableSubjectSlots = totalSlots - totalBreakPeriods - freeLectures;
     
     console.log(`Section ${data.sectionNumber || 1} Allocation Details:`);
     console.log(`  Total slots available: ${totalSlots}`);
-    console.log(`  Slots per subject: ${slotsPerSubject}`);
+    console.log(`  Break periods: ${totalBreakPeriods}`);
+    console.log(`  Free lectures requested: ${freeLectures}`);
+    console.log(`  Available for subjects: ${availableSubjectSlots}`);
     console.log(`  Number of subjects: ${subjects.length}`);
     
-    // Calculate fixed allocation based on total lectures for consistent distribution
-    const totalLectures = subjects.reduce((sum, subject) => {
-        return sum + (subject.isLab && subject.labDuration === 'double' ? 
-            Math.floor(slotsPerSubject / 2) * 2 : // Double labs take 2 slots each
-            slotsPerSubject); // Regular subjects take 1 slot each
-    }, 0);
+    // Calculate how many periods each subject should get
+    const basePeriodsPerSubject = Math.floor(availableSubjectSlots / subjects.length);
+    const extraPeriods = availableSubjectSlots % subjects.length;
     
-    // Use the pre-created master allocation plan (should already exist for multiple sections)
+    console.log(`  Base periods per subject: ${basePeriodsPerSubject}`);
+    console.log(`  Extra periods to distribute: ${extraPeriods}`);
+    
+    // Create master allocation plan if it doesn't exist (for consistent distribution across sections)
     if (!data.globalAllocationPlan) {
-        console.warn(`No global allocation plan found for section ${data.sectionNumber}, creating one...`);
-        // Fallback: create allocation plan for single section
+        console.log(`Creating master allocation plan for consistent distribution...`);
         data.globalAllocationPlan = {};
-        subjects.forEach(subject => {
+        
+        subjects.forEach((subject, index) => {
+            // Give extra periods to high-priority subjects first
+            const extraForThisSubject = (subject.priority === 'High' && index < extraPeriods) ? 1 : 0;
+            const totalPeriodsForSubject = basePeriodsPerSubject + extraForThisSubject;
+            
             const isDoubleLab = subject.isLab && subject.labDuration === 'double';
             
             if (isDoubleLab) {
-                const labSessions = Math.floor(slotsPerSubject / 2);
+                // For double labs, we need even number of periods (pairs)
+                const labSessions = Math.floor(totalPeriodsForSubject / 2);
+                const actualPeriods = labSessions * 2; // Each session takes 2 periods
+                
                 data.globalAllocationPlan[subject.name] = {
                     type: 'doubleLab',
                     sessions: labSessions,
+                    totalPeriods: actualPeriods,
                     isLab: true,
                     labDuration: 'double'
                 };
-                console.log(`Fallback Plan: ${subject.name} = ${labSessions} double-lab sessions (${labSessions * 2} total periods)`);
+                console.log(`Master Plan: ${subject.name} = ${labSessions} double-lab sessions (${actualPeriods} total periods)`);
             } else {
                 data.globalAllocationPlan[subject.name] = {
                     type: 'regular',
-                    sessions: slotsPerSubject,
+                    sessions: totalPeriodsForSubject,
+                    totalPeriods: totalPeriodsForSubject,
                     isLab: subject.isLab || false,
                     labDuration: subject.labDuration || 'regular'
                 };
-                console.log(`Fallback Plan: ${subject.name} = ${slotsPerSubject} ${subject.isLab ? 'single-lab' : 'theory'} sessions`);
+                console.log(`Master Plan: ${subject.name} = ${totalPeriodsForSubject} ${subject.isLab ? 'single-lab' : 'theory'} sessions`);
             }
         });
     } else {
@@ -1152,16 +1172,29 @@ function generateConflictFreeTimetable(data) {
         }
     }
     
-    // Fill remaining slots with free periods
+    // Fill remaining slots based on free lecture setting
     for (let period = 0; period < maxHoursPerDay; period++) {
         for (let day = 0; day < workingDays; day++) {
             if (!grid[period][day].subject) {
-                grid[period][day] = {
-                    subject: 'Free',
-                    teacher: '',
-                    subjectCode: '',
-                    isBreak: false
-                };
+                const actualFreeLectures = parseInt(data.freeLectures) || 0;
+                if (actualFreeLectures > 0) {
+                    // Only add free periods if specifically requested
+                    grid[period][day] = {
+                        subject: 'Free',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                } else {
+                    // If no free lectures wanted, these should not exist
+                    // But add as Free for now to prevent null values
+                    grid[period][day] = {
+                        subject: 'Free',
+                        teacher: '',
+                        subjectCode: '',
+                        isBreak: false
+                    };
+                }
             }
         }
     }
