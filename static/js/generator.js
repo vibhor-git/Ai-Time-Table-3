@@ -668,16 +668,18 @@ function createAllocationPlan(subjects, data) {
     return plan;
 }
 
-// Simplified function to generate timetables for multiple sections with timeout protection
+// Enhanced function to generate timetables for multiple sections with teacher conflict prevention
 function generateMultipleSectionTimetables(data) {
     const startTime = Date.now();
     const TIMEOUT_MS = 30000; // 30 second timeout to prevent infinite loops
     
     try {
         const sections = [];
-        const teacherUsage = {}; // Track teacher usage across sections
+        // Global teacher schedule to prevent conflicts across sections
+        // Format: { "teacherName_day_period": true }
+        const globalTeacherSchedule = {};
         
-        console.log(`Generating timetables for ${data.numberOfSections} sections...`);
+        console.log(`Generating conflict-free timetables for ${data.numberOfSections} sections...`);
         
         for (let sectionNum = 1; sectionNum <= data.numberOfSections; sectionNum++) {
             // Check timeout
@@ -689,15 +691,16 @@ function generateMultipleSectionTimetables(data) {
             const sectionData = {
                 ...data,
                 className: `${data.className} - Section ${sectionNum}`,
-                sectionNumber: sectionNum
+                sectionNumber: sectionNum,
+                globalTeacherSchedule: globalTeacherSchedule // Pass global schedule to prevent conflicts
             };
             
-            // Simple teacher distribution - round robin
+            // Distribute teachers across sections
             const adjustedSubjects = distributeTeachersSimple(data.subjects, sectionNum, data.numberOfSections);
             sectionData.subjects = adjustedSubjects;
             
-            console.log(`Generating Section ${sectionNum}...`);
-            const sectionTimetable = generateSimpleTimetable(sectionData);
+            console.log(`Generating Section ${sectionNum} with conflict prevention...`);
+            const sectionTimetable = generateConflictFreeTimetable(sectionData);
             if (!sectionTimetable) {
                 console.error(`Failed to generate timetable for section ${sectionNum}`);
                 return null;
@@ -774,6 +777,104 @@ function generateSimpleTimetable(data) {
             currentSlot++;
         }
     });
+    
+    // Fill remaining slots with free periods
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        for (let day = 0; day < workingDays; day++) {
+            if (!grid[period][day].subject) {
+                grid[period][day] = {
+                    subject: 'Free',
+                    teacher: '',
+                    subjectCode: '',
+                    isBreak: false
+                };
+            }
+        }
+    }
+    
+    return {
+        ...data,
+        timetableGrid: grid
+    };
+}
+
+// Conflict-free timetable generation that respects global teacher schedule
+function generateConflictFreeTimetable(data) {
+    const { workingDays, maxHoursPerDay, subjects, globalTeacherSchedule } = data;
+    
+    // Initialize grid
+    const grid = [];
+    for (let period = 0; period < maxHoursPerDay; period++) {
+        const row = [];
+        for (let day = 0; day < workingDays; day++) {
+            row.push({ subject: null, teacher: null, subjectCode: null, isBreak: false });
+        }
+        grid.push(row);
+    }
+    
+    // Create allocation plan for this section
+    const allocationPlan = [];
+    const totalSlots = workingDays * maxHoursPerDay;
+    const slotsPerSubject = Math.floor(totalSlots / subjects.length);
+    
+    subjects.forEach(subject => {
+        const teacher = subject.teachers[0]; // Use assigned teacher for this section
+        
+        // Add multiple allocations for this subject
+        for (let i = 0; i < slotsPerSubject; i++) {
+            allocationPlan.push({
+                subject: subject.name,
+                teacher: teacher,
+                subjectCode: subject.code
+            });
+        }
+    });
+    
+    // Shuffle allocation plan to distribute subjects randomly
+    for (let i = allocationPlan.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [allocationPlan[i], allocationPlan[j]] = [allocationPlan[j], allocationPlan[i]];
+    }
+    
+    // Allocate subjects with conflict checking
+    for (const allocation of allocationPlan) {
+        let allocated = false;
+        
+        // Try all possible slots until we find one where the teacher is available
+        for (let attempt = 0; attempt < totalSlots && !allocated; attempt++) {
+            const day = Math.floor(Math.random() * workingDays);
+            const period = Math.floor(Math.random() * maxHoursPerDay);
+            
+            // Check if slot is empty
+            if (grid[period][day].subject) {
+                continue;
+            }
+            
+            // Check if teacher is available at this time across all sections
+            const teacherKey = `${allocation.teacher}_${day}_${period}`;
+            if (globalTeacherSchedule[teacherKey]) {
+                continue; // Teacher is busy at this time
+            }
+            
+            // Allocate the slot
+            grid[period][day] = {
+                subject: allocation.subject,
+                teacher: allocation.teacher,
+                subjectCode: allocation.subjectCode,
+                isBreak: false
+            };
+            
+            // Mark teacher as busy at this time globally
+            globalTeacherSchedule[teacherKey] = true;
+            allocated = true;
+            
+            console.log(`Section ${data.sectionNumber}: ${allocation.teacher} allocated to Day ${day+1} Period ${period+1} for ${allocation.subject}`);
+        }
+        
+        if (!allocated) {
+            console.warn(`Could not allocate ${allocation.subject} for ${allocation.teacher} in section ${data.sectionNumber} due to teacher conflicts`);
+        }
+    }
     
     // Fill remaining slots with free periods
     for (let period = 0; period < maxHoursPerDay; period++) {
