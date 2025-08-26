@@ -722,14 +722,19 @@ function generateMultipleSectionTimetables(data) {
 
 // Simple round-robin teacher distribution to prevent complexity
 function distributeTeachersSimple(subjects, sectionNumber, totalSections) {
+    console.log(`Distributing teachers for Section ${sectionNumber}:`);
+    
     return subjects.map(subject => {
         if (subject.teachers.length === 1) {
+            console.log(`  ${subject.name}: ${subject.teachers[0]} (single teacher for all sections)`);
             return subject; // Single teacher handles all sections
         }
         
         // Round-robin assignment
         const teacherIndex = (sectionNumber - 1) % subject.teachers.length;
         const assignedTeacher = subject.teachers[teacherIndex];
+        
+        console.log(`  ${subject.name}: Assigned ${assignedTeacher} (teacher ${teacherIndex + 1} of ${subject.teachers.length})`);
         
         return {
             ...subject,
@@ -800,34 +805,40 @@ function generateSimpleTimetable(data) {
         
         while (!allocated && attempts < maxAttempts) {
             if (allocation.isDouble) {
-                // Need 2 consecutive periods for double lab
+                // Need 2 consecutive periods for double lab (avoid breaks)
                 if (currentPeriod < maxHoursPerDay - 1 && 
                     !grid[currentPeriod][currentDay].subject && 
                     !grid[currentPeriod + 1][currentDay].subject) {
                     
-                    // Allocate double lab
-                    grid[currentPeriod][currentDay] = {
-                        subject: allocation.subject,
-                        teacher: allocation.teacher,
-                        subjectCode: allocation.subjectCode,
-                        isBreak: false,
-                        isLab: true,
-                        labPart: 1,
-                        labDuration: 'double'
-                    };
-                    
-                    grid[currentPeriod + 1][currentDay] = {
-                        subject: allocation.subject,
-                        teacher: allocation.teacher,
-                        subjectCode: allocation.subjectCode,
-                        isBreak: false,
-                        isLab: true,
-                        labPart: 2,
-                        labDuration: 'double'
-                    };
-                    
-                    allocated = true;
-                    console.log(`Allocated DOUBLE LAB: ${allocation.subject} on Day ${currentDay+1} Period ${currentPeriod+1}-${currentPeriod+2}`);
+                    // Skip if break would be between the two periods
+                    if (data.breakEnabled && 
+                        (currentPeriod === data.breakStart - 1 || currentPeriod + 1 === data.breakStart)) {
+                        // Skip this slot, continue searching
+                    } else {
+                        // Allocate double lab
+                        grid[currentPeriod][currentDay] = {
+                            subject: allocation.subject,
+                            teacher: allocation.teacher,
+                            subjectCode: allocation.subjectCode,
+                            isBreak: false,
+                            isLab: true,
+                            labPart: 1,
+                            labDuration: 'double'
+                        };
+                        
+                        grid[currentPeriod + 1][currentDay] = {
+                            subject: allocation.subject,
+                            teacher: allocation.teacher,
+                            subjectCode: allocation.subjectCode,
+                            isBreak: false,
+                            isLab: true,
+                            labPart: 2,
+                            labDuration: 'double'
+                        };
+                        
+                        allocated = true;
+                        console.log(`Allocated DOUBLE LAB: ${allocation.subject} on Day ${currentDay+1} Period ${currentPeriod+1}-${currentPeriod+2}`);
+                    }
                 }
             } else {
                 // Regular allocation
@@ -901,6 +912,18 @@ function generateConflictFreeTimetable(data) {
     const totalSlots = workingDays * maxHoursPerDay;
     const slotsPerSubject = Math.floor(totalSlots / subjects.length);
     
+    console.log(`Section ${data.sectionNumber || 1} Allocation Details:`);
+    console.log(`  Total slots available: ${totalSlots}`);
+    console.log(`  Slots per subject: ${slotsPerSubject}`);
+    console.log(`  Number of subjects: ${subjects.length}`);
+    
+    // Calculate fixed allocation based on total lectures for consistent distribution
+    const totalLectures = subjects.reduce((sum, subject) => {
+        return sum + (subject.isLab && subject.labDuration === 'double' ? 
+            Math.floor(slotsPerSubject / 2) * 2 : // Double labs take 2 slots each
+            slotsPerSubject); // Regular subjects take 1 slot each
+    }, 0);
+    
     subjects.forEach(subject => {
         const teacher = subject.teachers[0]; // Use assigned teacher for this section
         
@@ -908,8 +931,10 @@ function generateConflictFreeTimetable(data) {
         const isDoubleLab = subject.isLab && subject.labDuration === 'double';
         
         if (isDoubleLab) {
-            // For double duration labs, allocate half the number of sessions but each takes 2 slots
+            // For double duration labs, ensure consistent allocation across sections
             const labSessions = Math.floor(slotsPerSubject / 2);
+            console.log(`Section ${data.sectionNumber}: Allocating ${labSessions} double-lab sessions for ${subject.name}`);
+            
             for (let i = 0; i < labSessions; i++) {
                 allocationPlan.push({
                     subject: subject.name,
@@ -921,7 +946,9 @@ function generateConflictFreeTimetable(data) {
                 });
             }
         } else {
-            // Regular subjects or single-period labs
+            // Regular subjects or single-period labs - ensure consistent allocation
+            console.log(`Section ${data.sectionNumber}: Allocating ${slotsPerSubject} regular lectures for ${subject.name}`);
+            
             for (let i = 0; i < slotsPerSubject; i++) {
                 allocationPlan.push({
                     subject: subject.name,
@@ -946,50 +973,57 @@ function generateConflictFreeTimetable(data) {
         let allocated = false;
         
         if (allocation.isDouble) {
-            // Handle double duration labs - need 2 consecutive periods
+            // Handle double duration labs - need 2 consecutive periods (NO BREAKS BETWEEN)
             for (let attempt = 0; attempt < totalSlots && !allocated; attempt++) {
                 const day = Math.floor(Math.random() * workingDays);
-                const period = Math.floor(Math.random() * (maxHoursPerDay - 1)); // -1 because we need 2 consecutive
                 
-                // Check if both consecutive slots are empty
-                if (grid[period][day].subject || grid[period + 1][day].subject) {
-                    continue;
+                // Try all possible consecutive period pairs on this day
+                for (let period = 0; period < maxHoursPerDay - 1 && !allocated; period++) {
+                    // Skip break periods entirely for lab allocation
+                    if (data.breakEnabled && (period === data.breakStart || period + 1 === data.breakStart)) {
+                        continue;
+                    }
+                    
+                    // Check if both consecutive slots are empty
+                    if (grid[period][day].subject || grid[period + 1][day].subject) {
+                        continue;
+                    }
+                    
+                    // Check if teacher is available for both consecutive periods
+                    const teacherKey1 = `${allocation.teacher}_${day}_${period}`;
+                    const teacherKey2 = `${allocation.teacher}_${day}_${period + 1}`;
+                    if (globalTeacherSchedule[teacherKey1] || globalTeacherSchedule[teacherKey2]) {
+                        continue;
+                    }
+                    
+                    // Allocate both consecutive slots for the lab
+                    grid[period][day] = {
+                        subject: allocation.subject,
+                        teacher: allocation.teacher,
+                        subjectCode: allocation.subjectCode,
+                        isBreak: false,
+                        isLab: true,
+                        labPart: 1,
+                        labDuration: 'double'
+                    };
+                    
+                    grid[period + 1][day] = {
+                        subject: allocation.subject,
+                        teacher: allocation.teacher,
+                        subjectCode: allocation.subjectCode,
+                        isBreak: false,
+                        isLab: true,
+                        labPart: 2,
+                        labDuration: 'double'
+                    };
+                    
+                    // Mark teacher as busy for both periods globally
+                    globalTeacherSchedule[teacherKey1] = true;
+                    globalTeacherSchedule[teacherKey2] = true;
+                    allocated = true;
+                    
+                    console.log(`Section ${data.sectionNumber}: ${allocation.teacher} allocated DOUBLE LAB to Day ${day+1} Period ${period+1}-${period+2} for ${allocation.subject}`);
                 }
-                
-                // Check if teacher is available for both consecutive periods
-                const teacherKey1 = `${allocation.teacher}_${day}_${period}`;
-                const teacherKey2 = `${allocation.teacher}_${day}_${period + 1}`;
-                if (globalTeacherSchedule[teacherKey1] || globalTeacherSchedule[teacherKey2]) {
-                    continue;
-                }
-                
-                // Allocate both consecutive slots for the lab
-                grid[period][day] = {
-                    subject: allocation.subject,
-                    teacher: allocation.teacher,
-                    subjectCode: allocation.subjectCode,
-                    isBreak: false,
-                    isLab: true,
-                    labPart: 1,
-                    labDuration: 'double'
-                };
-                
-                grid[period + 1][day] = {
-                    subject: allocation.subject,
-                    teacher: allocation.teacher,
-                    subjectCode: allocation.subjectCode,
-                    isBreak: false,
-                    isLab: true,
-                    labPart: 2,
-                    labDuration: 'double'
-                };
-                
-                // Mark teacher as busy for both periods globally
-                globalTeacherSchedule[teacherKey1] = true;
-                globalTeacherSchedule[teacherKey2] = true;
-                allocated = true;
-                
-                console.log(`Section ${data.sectionNumber}: ${allocation.teacher} allocated DOUBLE LAB to Day ${day+1} Period ${period+1}-${period+2} for ${allocation.subject}`);
             }
         } else {
             // Handle regular subjects or single-period labs
