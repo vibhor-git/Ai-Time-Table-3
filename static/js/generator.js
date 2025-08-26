@@ -929,13 +929,28 @@ function generateSimpleTimetable(data) {
                     };
                     freeSlotsFilled++;
                 } else {
-                    // Don't fill with Free - leave empty for proper rendering
-                    grid[period][day] = {
-                        subject: '',
-                        teacher: '',
-                        subjectCode: '',
-                        isBreak: false
-                    };
+                    // When free lectures = 0, fill remaining slots with high priority subjects
+                    const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
+                    if (highPrioritySubjects.length > 0) {
+                        const randomSubject = highPrioritySubjects[Math.floor(Math.random() * highPrioritySubjects.length)];
+                        const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+                        grid[period][day] = {
+                            subject: randomSubject.name,
+                            teacher: randomTeacher,
+                            subjectCode: randomSubject.code,
+                            isBreak: false
+                        };
+                    } else {
+                        // No high priority subjects available, use any subject
+                        const randomSubject = data.subjects[Math.floor(Math.random() * data.subjects.length)];
+                        const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+                        grid[period][day] = {
+                            subject: randomSubject.name,
+                            teacher: randomTeacher,
+                            subjectCode: randomSubject.code,
+                            isBreak: false
+                        };
+                    }
                 }
             }
         }
@@ -1005,16 +1020,27 @@ function generateConflictFreeTimetable(data) {
             // Base allocation
             let subjectPeriods = periodsPerSubject;
             
-            // Give extra periods to high priority subjects first
-            if (subject.priority === 'High' && remainingToDistribute > 0) {
-                subjectPeriods++;
-                remainingToDistribute--;
-            } else if (subject.priority === 'Medium' && remainingToDistribute > 0 && highPrioritySubjects.length === 0) {
-                subjectPeriods++;
-                remainingToDistribute--;
-            } else if (remainingToDistribute > 0 && highPrioritySubjects.length === 0 && mediumPrioritySubjects.length === 0) {
-                subjectPeriods++;
-                remainingToDistribute--;
+                // Distribute extra periods to high priority subjects evenly
+            if (remainingToDistribute > 0) {
+                if (subject.priority === 'High') {
+                    // Give extra periods to high priority subjects first
+                    const extraForHigh = Math.ceil(remainingToDistribute / highPrioritySubjects.length);
+                    const actualExtra = Math.min(extraForHigh, remainingToDistribute);
+                    subjectPeriods += actualExtra;
+                    remainingToDistribute -= actualExtra;
+                } else if (subject.priority === 'Medium' && highPrioritySubjects.length === 0) {
+                    // If no high priority, give to medium priority
+                    const extraForMedium = Math.ceil(remainingToDistribute / mediumPrioritySubjects.length);
+                    const actualExtra = Math.min(extraForMedium, remainingToDistribute);
+                    subjectPeriods += actualExtra;
+                    remainingToDistribute -= actualExtra;
+                } else if (subject.priority === 'Low' && highPrioritySubjects.length === 0 && mediumPrioritySubjects.length === 0) {
+                    // If no high or medium priority, give to low priority
+                    const extraForLow = Math.ceil(remainingToDistribute / lowPrioritySubjects.length);
+                    const actualExtra = Math.min(extraForLow, remainingToDistribute);
+                    subjectPeriods += actualExtra;
+                    remainingToDistribute -= actualExtra;
+                }
             }
             
             // Handle lab configuration
@@ -1523,6 +1549,35 @@ function allocateSubjectsWithTimeout(grid, allocationPlan, data, startTime, time
                         isBreak: false
                     };
                     freeSlotsFilled++;
+                }
+            }
+        }
+    } else {
+        // When freeLectures = 0, fill ALL remaining empty slots with high priority subjects
+        for (let period = 0; period < maxHoursPerDay; period++) {
+            for (let day = 0; day < workingDays; day++) {
+                if (!grid[period][day].subject) {
+                    const highPrioritySubjects = data.subjects.filter(s => s.priority === 'High');
+                    if (highPrioritySubjects.length > 0) {
+                        const randomSubject = highPrioritySubjects[Math.floor(Math.random() * highPrioritySubjects.length)];
+                        const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+                        grid[period][day] = {
+                            subject: randomSubject.name,
+                            teacher: randomTeacher,
+                            subjectCode: randomSubject.code,
+                            isBreak: false
+                        };
+                    } else {
+                        // No high priority subjects, use any subject
+                        const randomSubject = data.subjects[Math.floor(Math.random() * data.subjects.length)];
+                        const randomTeacher = randomSubject.teachers[Math.floor(Math.random() * randomSubject.teachers.length)];
+                        grid[period][day] = {
+                            subject: randomSubject.name,
+                            teacher: randomTeacher,
+                            subjectCode: randomSubject.code,
+                            isBreak: false
+                        };
+                    }
                 }
             }
         }
