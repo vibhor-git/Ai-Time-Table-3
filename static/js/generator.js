@@ -681,9 +681,36 @@ function generateMultipleSectionTimetables(data) {
         
         console.log(`Generating conflict-free timetables for ${data.numberOfSections} sections...`);
         
-        // Create shared allocation plan for all sections
-        const sharedData = { ...data, globalAllocationPlan: null };
+        // PRE-CREATE the master allocation plan ONCE for ALL sections
+        const totalSlots = data.workingDays * data.maxHoursPerDay;
+        const slotsPerSubject = Math.floor(totalSlots / data.subjects.length);
+        const masterAllocationPlan = {};
         
+        console.log(`Creating MASTER allocation plan for ${data.subjects.length} subjects:`);
+        data.subjects.forEach(subject => {
+            const isDoubleLab = subject.isLab && subject.labDuration === 'double';
+            
+            if (isDoubleLab) {
+                const labSessions = Math.floor(slotsPerSubject / 2);
+                masterAllocationPlan[subject.name] = {
+                    type: 'doubleLab',
+                    sessions: labSessions,
+                    isLab: true,
+                    labDuration: 'double'
+                };
+                console.log(`  ${subject.name}: ${labSessions} double-lab sessions (${labSessions * 2} total periods)`);
+            } else {
+                masterAllocationPlan[subject.name] = {
+                    type: 'regular',
+                    sessions: slotsPerSubject,
+                    isLab: subject.isLab || false,
+                    labDuration: subject.labDuration || 'regular'
+                };
+                console.log(`  ${subject.name}: ${slotsPerSubject} ${subject.isLab ? 'single-lab' : 'theory'} sessions`);
+            }
+        });
+        
+        // Generate each section using the SAME master plan
         for (let sectionNum = 1; sectionNum <= data.numberOfSections; sectionNum++) {
             // Check timeout
             if (Date.now() - startTime > TIMEOUT_MS) {
@@ -692,26 +719,23 @@ function generateMultipleSectionTimetables(data) {
             }
             
             const sectionData = {
-                ...sharedData,
+                ...data,
                 className: `${data.className} - Section ${sectionNum}`,
                 sectionNumber: sectionNum,
                 globalTeacherSchedule: globalTeacherSchedule, // Pass global schedule to prevent conflicts
-                globalAllocationPlan: sharedData.globalAllocationPlan // Share allocation plan across sections
+                globalAllocationPlan: masterAllocationPlan // Use FIXED master plan for ALL sections
             };
             
             // Distribute teachers across sections
             const adjustedSubjects = distributeTeachersSimple(data.subjects, sectionNum, data.numberOfSections);
             sectionData.subjects = adjustedSubjects;
             
-            console.log(`Generating Section ${sectionNum} with consistent allocation and conflict prevention...`);
+            console.log(`Generating Section ${sectionNum} with FIXED allocation plan...`);
             const sectionTimetable = generateConflictFreeTimetable(sectionData);
             if (!sectionTimetable) {
                 console.error(`Failed to generate timetable for section ${sectionNum}`);
                 return null;
             }
-            
-            // Update shared allocation plan for next sections
-            sharedData.globalAllocationPlan = sectionData.globalAllocationPlan;
             
             sections.push(sectionTimetable);
         }
@@ -934,15 +958,15 @@ function generateConflictFreeTimetable(data) {
             slotsPerSubject); // Regular subjects take 1 slot each
     }, 0);
     
-    // Create a global allocation plan that's consistent across all sections
+    // Use the pre-created master allocation plan (should already exist for multiple sections)
     if (!data.globalAllocationPlan) {
-        // First section - create the master allocation plan
+        console.warn(`No global allocation plan found for section ${data.sectionNumber}, creating one...`);
+        // Fallback: create allocation plan for single section
         data.globalAllocationPlan = {};
         subjects.forEach(subject => {
             const isDoubleLab = subject.isLab && subject.labDuration === 'double';
             
             if (isDoubleLab) {
-                // Double labs: fewer sessions but each takes 2 consecutive slots
                 const labSessions = Math.floor(slotsPerSubject / 2);
                 data.globalAllocationPlan[subject.name] = {
                     type: 'doubleLab',
@@ -950,18 +974,19 @@ function generateConflictFreeTimetable(data) {
                     isLab: true,
                     labDuration: 'double'
                 };
-                console.log(`Master Plan: ${subject.name} = ${labSessions} double-lab sessions (${labSessions * 2} total periods)`);
+                console.log(`Fallback Plan: ${subject.name} = ${labSessions} double-lab sessions (${labSessions * 2} total periods)`);
             } else {
-                // Regular subjects: standard allocation
                 data.globalAllocationPlan[subject.name] = {
                     type: 'regular',
                     sessions: slotsPerSubject,
                     isLab: subject.isLab || false,
                     labDuration: subject.labDuration || 'regular'
                 };
-                console.log(`Master Plan: ${subject.name} = ${slotsPerSubject} ${subject.isLab ? 'single-lab' : 'theory'} sessions`);
+                console.log(`Fallback Plan: ${subject.name} = ${slotsPerSubject} ${subject.isLab ? 'single-lab' : 'theory'} sessions`);
             }
         });
+    } else {
+        console.log(`Section ${data.sectionNumber}: Using existing master allocation plan`);
     }
     
     // Apply the global allocation plan to this section
@@ -977,7 +1002,7 @@ function generateConflictFreeTimetable(data) {
         console.log(`Section ${data.sectionNumber}: Using global plan for ${subject.name} - ${allocation.sessions} ${allocation.type} sessions`);
         
         if (allocation.type === 'doubleLab') {
-            // Add double lab sessions
+            // Add double lab sessions - exactly the same number for all sections
             for (let i = 0; i < allocation.sessions; i++) {
                 allocationPlan.push({
                     subject: subject.name,
@@ -987,9 +1012,10 @@ function generateConflictFreeTimetable(data) {
                     isDouble: true,
                     labDuration: 'double'
                 });
+                console.log(`Section ${data.sectionNumber}: Added double lab ${i+1}/${allocation.sessions} for ${subject.name}`);
             }
         } else {
-            // Add regular sessions
+            // Add regular sessions - exactly the same number for all sections
             for (let i = 0; i < allocation.sessions; i++) {
                 allocationPlan.push({
                     subject: subject.name,
@@ -999,9 +1025,19 @@ function generateConflictFreeTimetable(data) {
                     isDouble: false,
                     labDuration: allocation.labDuration
                 });
+                if (allocation.isLab) {
+                    console.log(`Section ${data.sectionNumber}: Added single lab ${i+1}/${allocation.sessions} for ${subject.name}`);
+                }
             }
         }
     });
+    
+    console.log(`Section ${data.sectionNumber}: Total allocation plan has ${allocationPlan.length} items`);
+    
+    // Debug: Count labs in this section's allocation
+    const labCount = allocationPlan.filter(item => item.isLab).length;
+    const doubleLabCount = allocationPlan.filter(item => item.isDouble).length;
+    console.log(`Section ${data.sectionNumber}: Labs in allocation - Single: ${labCount - doubleLabCount}, Double: ${doubleLabCount}, Total Lab Periods: ${(labCount - doubleLabCount) + (doubleLabCount * 2)}`);
     
     // Shuffle allocation plan to distribute subjects randomly
     for (let i = allocationPlan.length - 1; i > 0; i--) {
